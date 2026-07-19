@@ -124,7 +124,24 @@ class TradeLayer:
         lines = self._open_lines.pop(trade.id, None)
         if lines is not None:
             self._remove_lines(lines)
+        self._record_closed(trade)
+        self._push_scatters()
+        self._push_links()
 
+    def load_trades(self, trades: list) -> None:
+        """Draw a finished run's trades in one shot (fast-run mode)."""
+        self.clear()
+        for trade in trades:
+            entry_point = (float(trade.entry_index), float(trade.entry_price))
+            if trade.direction > 0:
+                self._buy_points.append(entry_point)
+            else:
+                self._sell_points.append(entry_point)
+            self._record_closed(trade)
+        self._push_scatters()
+        self._push_links()
+
+    def _record_closed(self, trade) -> None:
         exit_point = (float(trade.exit_index), float(trade.exit_price))
         entry_point = (float(trade.entry_index), float(trade.entry_price))
         if trade.net > 0:
@@ -133,8 +150,6 @@ class TradeLayer:
         else:
             self._loss_exit_points.append(exit_point)
             self._loss_link_points.extend([entry_point, exit_point])
-        self._push_scatters()
-        self._push_links()
 
     def _make_level(
         self, price: float | None, color: str, text: str

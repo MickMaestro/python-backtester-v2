@@ -9,7 +9,7 @@ sub-chart synced to the replay clock.
 from __future__ import annotations
 
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -33,18 +34,46 @@ from backtester.strategy.examples import STRATEGIES
 from backtester.ui.chart.chart_widget import BACKGROUND, ChartWidget
 from backtester.ui.chart.replay_controller import ReplayController
 from backtester.ui.chart.trade_markers import TradeLayer
+from backtester.ui.settings import app_settings, cast_like
 
 SPEEDS = [1, 2, 5, 10, 25, 50, 100, 250]
 INITIAL_WINDOW = 300
 
 
+class FastRunWorker(QThread):
+    """Runs a backtest to completion off the UI thread, reporting progress."""
+
+    progress = Signal(int, int)
+    finished_result = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, backtester: Backtester, parent=None):
+        super().__init__(parent)
+        self._bt = backtester
+
+    def run(self) -> None:
+        total = len(self._bt.df)
+        try:
+            for event in self._bt.run():
+                if isinstance(event, EquityEvent) and event.index % 500 == 0:
+                    self.progress.emit(event.index + 1, total)
+            self.progress.emit(total, total)
+            self.finished_result.emit(self._bt.result())
+        except Exception as exc:  # surface engine/strategy errors to the UI
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class BacktestTab(QWidget):
+    #: (result, title, switch_to_results) — emitted when any run completes.
+    run_completed = Signal(object, str, bool)
+
     def __init__(self, store: DataStore, parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
         self._df = None
         self._loaded_key: str | None = None
         self._controller: ReplayController | None = None
+        self._fast_worker: FastRunWorker | None = None
         self._param_widgets: dict[str, QWidget] = {}
         self._equity_x: list[int] = []
         self._equity_balance: list[float] = []
@@ -55,6 +84,7 @@ class BacktestTab(QWidget):
         layout.addWidget(self._build_setup_panel())
         layout.addLayout(self._build_replay_side(), stretch=1)
         self.refresh_datasets()
+        self._restore_settings()
 
     # ------------------------------------------------------------ UI build
 
@@ -104,16 +134,22 @@ class BacktestTab(QWidget):
 
         self.start_button = QPushButton("▶  Start Replay")
         self.start_button.clicked.connect(self._start)
+        self.fast_button = QPushButton("⏩  Run Fast")
+        self.fast_button.clicked.connect(self._run_fast)
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self._reset)
         self.setup_note = QLabel("")
         self.setup_note.setWordWrap(True)
         self.setup_note.setStyleSheet("color: gray;")
 
+        run_row = QHBoxLayout()
+        run_row.addWidget(self.start_button)
+        run_row.addWidget(self.fast_button)
+
         column.addWidget(data_group)
         column.addWidget(self.params_group)
         column.addWidget(account_group)
-        column.addWidget(self.start_button)
+        column.addLayout(run_row)
         column.addWidget(self.reset_button)
         column.addWidget(self.setup_note)
         column.addStretch()
@@ -137,6 +173,9 @@ class BacktestTab(QWidget):
         self.follow_check.setChecked(True)
         self.follow_check.toggled.connect(self._on_follow_toggled)
         self.progress_label = QLabel("no run")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedWidth(160)
+        self.progress_bar.setVisible(False)
         for button in (self.play_button, self.step_button, self.ff_button):
             button.setEnabled(False)
 
@@ -148,6 +187,7 @@ class BacktestTab(QWidget):
         toolbar.addWidget(self.follow_check)
         toolbar.addSpacing(16)
         toolbar.addWidget(self.progress_label)
+        toolbar.addWidget(self.progress_bar)
         toolbar.addStretch()
 
         self.badge_label = QLabel(" ")
@@ -218,20 +258,24 @@ class BacktestTab(QWidget):
         self._param_widgets.clear()
         if strategy_name not in STRATEGIES:
             return
+        settings = app_settings()
         for name, default in STRATEGIES[strategy_name].params.items():
+            stored = cast_like(
+                settings.value(f"params/{strategy_name}/{name}"), default
+            )
             if isinstance(default, bool):
                 widget = QCheckBox()
-                widget.setChecked(default)
+                widget.setChecked(stored)
             elif isinstance(default, int):
                 widget = QSpinBox()
                 widget.setRange(1, 100_000)
-                widget.setValue(default)
+                widget.setValue(stored)
             elif isinstance(default, float):
                 widget = QDoubleSpinBox()
                 widget.setRange(0.0, 1e9)
                 widget.setDecimals(2)
                 widget.setSingleStep(0.01 if default < 1 else 1.0)
-                widget.setValue(default)
+                widget.setValue(stored)
             else:
                 continue  # only numeric/bool params are editable for now
             self.params_form.addRow(f"{name}:", widget)
@@ -250,13 +294,10 @@ class BacktestTab(QWidget):
 
     # ----------------------------------------------------------------- run
 
-    def _start(self) -> None:
+    def _make_backtester(self) -> Backtester | None:
         if self._df is None or len(self._df) == 0:
             QMessageBox.information(self, "Backtest", "Load a dataset first.")
-            return
-        self._stop_controller()
-        self._clear_run_visuals()
-
+            return None
         strategy = STRATEGIES[self.strategy_combo.currentText()](
             **self._collect_params()
         )
@@ -268,7 +309,21 @@ class BacktestTab(QWidget):
             commission_per_lot=self.commission_spin.value(),
             instrument=self._instrument(),
         )
-        backtester = Backtester(self._df, strategy, config)
+        self._save_settings()
+        return Backtester(self._df, strategy, config)
+
+    def _run_title(self) -> str:
+        return (
+            f"{(self._loaded_key or '').replace('_', ' ')} — "
+            f"{self.strategy_combo.currentText()} {self._collect_params()}"
+        )
+
+    def _start(self) -> None:
+        backtester = self._make_backtester()
+        if backtester is None:
+            return
+        self._stop_controller()
+        self._clear_run_visuals()
 
         self.chart.set_data(self._df, title=self._loaded_key.replace("_", " "))
         self.chart.reveal_to(0)
@@ -288,6 +343,58 @@ class BacktestTab(QWidget):
             button.setEnabled(True)
         self.badge_label.setText(" ")
         self._controller.play()
+
+    def _run_fast(self) -> None:
+        backtester = self._make_backtester()
+        if backtester is None:
+            return
+        self._stop_controller()
+        self._clear_run_visuals()
+
+        self.progress_bar.setRange(0, len(self._df))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.progress_label.setText("Running…")
+        for button in (self.start_button, self.fast_button, self.reset_button):
+            button.setEnabled(False)
+
+        self._fast_worker = FastRunWorker(backtester, parent=self)
+        self._fast_worker.progress.connect(
+            lambda done, total: self.progress_bar.setValue(done)
+        )
+        self._fast_worker.finished_result.connect(self._on_fast_finished)
+        self._fast_worker.failed.connect(self._on_fast_failed)
+        self._fast_worker.start()
+
+    def _on_fast_finished(self, result) -> None:
+        self.result = result
+        self._finish_fast_ui()
+        self.chart.set_data(self._df, title=(self._loaded_key or "").replace("_", " "))
+        self.trade_layer.load_trades(result.trades)
+        self._equity_x = list(range(len(result.equity)))
+        self._equity_balance = result.equity["balance"].tolist()
+        self._equity_equity = result.equity["equity"].tolist()
+        self._balance_curve.setData(self._equity_x, self._equity_balance)
+        self._equity_curve.setData(self._equity_x, self._equity_equity)
+        self.badge_label.setText(
+            f"Balance {result.final_balance:,.2f}   Equity {result.final_balance:,.2f}   "
+            f"Floating +0.00   Open 0   Closed {len(result.trades)}"
+        )
+        self._show_summary(result)
+        self.run_completed.emit(result, self._run_title(), True)
+
+    def _on_fast_failed(self, message: str) -> None:
+        self._finish_fast_ui()
+        self.progress_label.setText("Run failed")
+        QMessageBox.warning(self, "Backtest failed", message)
+
+    def _finish_fast_ui(self) -> None:
+        self.progress_bar.setVisible(False)
+        for button in (self.start_button, self.fast_button, self.reset_button):
+            button.setEnabled(True)
+        if self._fast_worker is not None:
+            self._fast_worker.deleteLater()
+            self._fast_worker = None
 
     def _instrument(self) -> InstrumentSpec:
         symbol, _, timeframe = (self._loaded_key or "_").rpartition("_")
@@ -336,6 +443,14 @@ class BacktestTab(QWidget):
 
     def _on_finished(self, result) -> None:
         self.result = result
+        self._show_summary(result)
+        self.play_button.setText("Play")
+        self.play_button.setEnabled(False)
+        self.step_button.setEnabled(False)
+        self.ff_button.setEnabled(False)
+        self.run_completed.emit(result, self._run_title(), False)
+
+    def _show_summary(self, result) -> None:
         stats = result.stats
         self.progress_label.setText(
             f"Finished — {stats['trades']} trades, "
@@ -344,10 +459,20 @@ class BacktestTab(QWidget):
             f"PF {stats['profit_factor']:.2f}, "
             f"max DD {stats['max_drawdown_pct']:.1f}%"
         )
-        self.play_button.setText("Play")
-        self.play_button.setEnabled(False)
-        self.step_button.setEnabled(False)
-        self.ff_button.setEnabled(False)
+
+    def focus_trade(self, trade) -> None:
+        """Zoom the chart to a trade's entry→exit region (Results tab jump)."""
+        if self._df is None:
+            return
+        self.follow_check.setChecked(False)
+        n = len(self._df)
+        span = max(trade.exit_index - trade.entry_index, 5)
+        margin = max(10, span)
+        self.chart.plot.setXRange(
+            max(0, trade.entry_index - margin),
+            min(n, trade.exit_index + margin),
+            padding=0.05,
+        )
 
     # ------------------------------------------------------------ controls
 
@@ -378,7 +503,52 @@ class BacktestTab(QWidget):
             self.chart.set_data(self._df, title=(self._loaded_key or "").replace("_", " "))
             self.progress_label.setText(f"{len(self._df):,} bars loaded")
 
+    # ------------------------------------------------------------ settings
+
+    def _save_settings(self) -> None:
+        settings = app_settings()
+        settings.setValue("backtest/dataset", self.dataset_combo.currentText())
+        settings.setValue("backtest/strategy", self.strategy_combo.currentText())
+        settings.setValue("backtest/balance", self.balance_spin.value())
+        settings.setValue(
+            "backtest/spread_from_data", self.spread_data_check.isChecked()
+        )
+        settings.setValue("backtest/spread", self.spread_spin.value())
+        settings.setValue("backtest/commission", self.commission_spin.value())
+        settings.setValue("backtest/speed_index", self.speed_combo.currentIndex())
+        strategy = self.strategy_combo.currentText()
+        for name, value in self._collect_params().items():
+            settings.setValue(f"params/{strategy}/{name}", value)
+
+    def _restore_settings(self) -> None:
+        settings = app_settings()
+        dataset = str(settings.value("backtest/dataset", "") or "")
+        if dataset and self.dataset_combo.findText(dataset) >= 0:
+            self.dataset_combo.setCurrentText(dataset)
+        strategy = str(settings.value("backtest/strategy", "") or "")
+        if strategy and self.strategy_combo.findText(strategy) >= 0:
+            self.strategy_combo.setCurrentText(strategy)
+        self._rebuild_param_form(self.strategy_combo.currentText())
+        self.balance_spin.setValue(
+            cast_like(settings.value("backtest/balance"), 10_000.0)
+        )
+        self.spread_data_check.setChecked(
+            cast_like(settings.value("backtest/spread_from_data"), True)
+        )
+        self.spread_spin.setValue(cast_like(settings.value("backtest/spread"), 10))
+        self.commission_spin.setValue(
+            cast_like(settings.value("backtest/commission"), 0.0)
+        )
+        speed_index = cast_like(settings.value("backtest/speed_index"), 3)
+        if 0 <= speed_index < self.speed_combo.count():
+            self.speed_combo.setCurrentIndex(speed_index)
+
     # ----------------------------------------------------------- lifecycle
+
+    def shutdown(self) -> None:
+        self._stop_controller()
+        if self._fast_worker is not None and self._fast_worker.isRunning():
+            self._fast_worker.wait(5_000)
 
     def _stop_controller(self) -> None:
         if self._controller is not None:

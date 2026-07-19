@@ -20,7 +20,9 @@ See [PLAN.md](PLAN.md) for the full development plan.
 - [x] **Phase 4 — Visual replay**: Backtest tab with play/pause/step/speed/
       fast-forward, candles drawing in sequence, live trade arrows and
       win/loss connectors, moving SL/TP lines, synced equity sub-chart
-- [ ] Phase 5 — Results panel, fast-run mode, report export
+- [x] **Phase 5 — Results & UX**: Results tab (stats summary, sortable trade
+      list, double-click to jump to the chart), fast-run mode with progress
+      bar, trades/summary export, persistent settings
 - [ ] Phase 6 — Tick-accurate fills, parameter optimization, packaging
 
 ## Requirements
@@ -89,6 +91,27 @@ commission, and hit **Start Replay**:
 If a dataset was downloaded before contract-spec capture was added, the
 Backtest tab warns and assumes forex contract math — re-download the
 dataset (any small range; it merges) to attach the broker's real spec.
+
+Prefer results over animation? **⏩ Run Fast** executes the whole backtest on
+a background thread with a progress bar, then draws the final chart (all
+candles, every trade marker, full equity curve) and opens the Results tab.
+Hit *Start Replay* afterwards to watch the same run animated — runs are
+deterministic.
+
+## Results tab
+
+After any run (replay or fast), the Results tab holds:
+
+- the full performance summary (net profit, profit factor, win rate,
+  expectancy, drawdown, Sharpe, streaks…),
+- a sortable trade list — entry/exit times and prices, duration, pips, net
+  (color-coded), commission, swap, and close reason,
+- **double-click a trade to jump to it on the chart**, zoomed to the
+  entry→exit region,
+- export buttons for a trades CSV and a summary text report.
+
+Your last-used dataset, strategy, parameter values, account settings, replay
+speed, and window size are remembered between sessions.
 
 ## Run a backtest (CLI)
 

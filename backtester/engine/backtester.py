@@ -40,6 +40,7 @@ class BacktestResult:
     trades: list
     equity: pd.DataFrame                # columns: time, balance, equity
     stats: dict
+    config: "BacktestConfig | None" = None  # run settings (instrument, costs)
 
     @property
     def net_profit(self) -> float:
@@ -155,6 +156,7 @@ class Backtester:
             stats=compute_stats(
                 self.broker.trades, equity, self.config.initial_balance
             ),
+            config=self.config,
         )
 
     # ------------------------------------------------------------ helpers
