@@ -14,7 +14,9 @@ See [PLAN.md](PLAN.md) for the full development plan.
 - [x] **Phase 2 — Backtest engine (headless)**: simulated broker (market /
       limit / stop orders, SL/TP, spread, commission, swap), strategy API
       with indicators, performance stats, CLI runner
-- [ ] Phase 3 — Candlestick chart (pyqtgraph): pan/zoom, crosshair, indicators
+- [x] **Phase 3 — Candlestick chart (pyqtgraph)**: viewport-windowed candle
+      rendering (100k+ bars stay fluid), pan/zoom, crosshair with OHLC
+      readout, indicator overlays, Chart tab in the GUI
 - [ ] Phase 4 — Visual replay: playback controls, live trade drawing
 - [ ] Phase 5 — Results panel, fast-run mode, report export
 - [ ] Phase 6 — Tick-accurate fills, parameter optimization, packaging
@@ -46,6 +48,19 @@ files in `data_library/` and can be exported to or imported from CSV.
 Downloads also capture the symbol's contract spec (point size, digits,
 contract size) so backtest PnL is computed correctly for forex pairs,
 indices, metals, etc.
+
+## Chart tab
+
+Pick any dataset from the library in the **Chart** tab and browse it:
+
+- Drag / mouse-wheel to pan and zoom the time axis; the price axis auto-fits
+  whatever is visible.
+- Crosshair follows the mouse with a time + OHLC + volume readout above the
+  chart.
+- Overlay SMA/EMA lines with any period (Add / Clear in the toolbar).
+- The X axis is bar-index based, so weekends and session gaps don't leave
+  holes in the chart. Zoomed far out, candles switch to a close-price line
+  for speed; zoom in and candles return.
 
 ## Run a backtest (CLI)
 

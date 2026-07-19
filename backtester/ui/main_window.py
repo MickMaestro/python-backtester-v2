@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QMainWindow, QTabWidget
 
 from backtester import __version__
+from backtester.data.store import DataStore
+from backtester.ui.chart_tab import ChartTab
 from backtester.ui.data_tab import DataTab
 
 
@@ -15,12 +17,21 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Python Backtester {__version__}")
         self.resize(1200, 800)
 
-        self.data_tab = DataTab()
+        store = DataStore()
+        self.data_tab = DataTab(store)
+        self.chart_tab = ChartTab(store)
+        self.data_tab.datasets_changed.connect(self.chart_tab.refresh_datasets)
 
         tabs = QTabWidget()
         tabs.addTab(self.data_tab, "Data Manager")
-        tabs.addTab(_placeholder("Backtest setup arrives in Phase 2."), "Backtest")
-        tabs.addTab(_placeholder("Chart and replay arrive in Phases 3-4."), "Chart")
+        tabs.addTab(
+            _placeholder(
+                "Backtest setup GUI arrives with the replay (Phases 4-5).\n"
+                "Until then, run backtests with:  python run_backtest.py SYMBOL TF"
+            ),
+            "Backtest",
+        )
+        tabs.addTab(self.chart_tab, "Chart")
         tabs.addTab(_placeholder("Results and statistics arrive in Phase 5."), "Results")
         self.setCentralWidget(tabs)
 

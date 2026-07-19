@@ -119,10 +119,13 @@ def _guess_from_filename(filename: str) -> tuple[str, str]:
 
 
 class DataTab(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    #: Emitted whenever the local library contents change (download/import/delete).
+    datasets_changed = Signal()
+
+    def __init__(self, store: DataStore | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.client = MT5Client()
-        self.store = DataStore()
+        self.store = store if store is not None else DataStore()
         self._worker: DownloadWorker | None = None
 
         layout = QHBoxLayout(self)
@@ -298,6 +301,7 @@ class DataTab(QWidget):
             f"Saved {info.bars:,} bars of {info.symbol} {info.timeframe}."
         )
         self._refresh_table()
+        self.datasets_changed.emit()
 
     def _download_failed(self, message: str) -> None:
         self.download_button.setEnabled(True)
@@ -347,6 +351,7 @@ class DataTab(QWidget):
             QMessageBox.warning(self, "Import failed", str(exc))
             return
         self._refresh_table()
+        self.datasets_changed.emit()
         self.download_status.setText(
             f"Imported {info.bars:,} bars as {info.symbol} {info.timeframe}."
         )
@@ -383,6 +388,7 @@ class DataTab(QWidget):
         except StoreError as exc:
             QMessageBox.warning(self, "Delete failed", str(exc))
         self._refresh_table()
+        self.datasets_changed.emit()
 
     # ------------------------------------------------------------ lifecycle
 
