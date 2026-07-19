@@ -32,6 +32,7 @@ class CandlestickItem(pg.GraphicsObject):
         self._o = self._h = self._l = self._c = np.empty(0)
         self._picture: QPicture | None = None
         self._built: tuple[int, int] | None = None  # index window in the cache
+        self._visible: int | None = None  # replay reveal limit; None = all
 
     # ------------------------------------------------------------- data
 
@@ -44,24 +45,37 @@ class CandlestickItem(pg.GraphicsObject):
         )
         self._picture = None
         self._built = None
+        self._visible = None
         self.prepareGeometryChange()
         self.update()
 
     def __len__(self) -> int:
         return len(self._c)
 
+    def set_visible_length(self, k: int | None) -> None:
+        """Limit drawing to the first ``k`` bars (replay reveal); None = all."""
+        self._visible = None if k is None else max(0, min(int(k), len(self._c)))
+        self._picture = None
+        self._built = None
+        self.prepareGeometryChange()
+        self.update()
+
+    @property
+    def visible_length(self) -> int:
+        return len(self._c) if self._visible is None else self._visible
+
     # -------------------------------------------------- pyqtgraph plumbing
 
     def boundingRect(self) -> QRectF:
-        n = len(self)
+        n = self.visible_length
         if n == 0:
             return QRectF()
-        lo, hi = float(self._l.min()), float(self._h.max())
+        lo, hi = float(self._l[:n].min()), float(self._h[:n].max())
         return QRectF(-1.0, lo, n + 1.0, max(hi - lo, 1e-12))
 
     def dataBounds(self, ax, frac=1.0, orthoRange=None):
         """Lets the ViewBox auto-fit Y to the *visible* X window."""
-        n = len(self)
+        n = self.visible_length
         if n == 0:
             return (None, None)
         if ax == 0:
@@ -79,7 +93,7 @@ class CandlestickItem(pg.GraphicsObject):
         return 2.0
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
-        n = len(self)
+        n = self.visible_length
         if n == 0:
             return
         vb = self.getViewBox()

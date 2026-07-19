@@ -17,7 +17,9 @@ See [PLAN.md](PLAN.md) for the full development plan.
 - [x] **Phase 3 — Candlestick chart (pyqtgraph)**: viewport-windowed candle
       rendering (100k+ bars stay fluid), pan/zoom, crosshair with OHLC
       readout, indicator overlays, Chart tab in the GUI
-- [ ] Phase 4 — Visual replay: playback controls, live trade drawing
+- [x] **Phase 4 — Visual replay**: Backtest tab with play/pause/step/speed/
+      fast-forward, candles drawing in sequence, live trade arrows and
+      win/loss connectors, moving SL/TP lines, synced equity sub-chart
 - [ ] Phase 5 — Results panel, fast-run mode, report export
 - [ ] Phase 6 — Tick-accurate fills, parameter optimization, packaging
 
@@ -61,6 +63,32 @@ Pick any dataset from the library in the **Chart** tab and browse it:
 - The X axis is bar-index based, so weekends and session gaps don't leave
   holes in the chart. Zoomed far out, candles switch to a close-price line
   for speed; zoom in and candles return.
+
+## Backtest tab (visual replay)
+
+The replacement for MT5's visual strategy tester. Pick a dataset and a
+strategy (its parameters appear as an editable form), set balance / spread /
+commission, and hit **Start Replay**:
+
+- Candles draw in sequence at your chosen speed (1–250 bars/s), with
+  **Play/Pause**, **Step** (one bar at a time), and **To End**
+  (fast-forward, no animation).
+- Trades appear live as they happen: ▲ buy / ▼ sell entry arrows, ✕ exit
+  marks, and a dashed entry→exit connector colored by win/loss.
+- Open positions show dashed **SL/TP lines that move** when the strategy
+  modifies them — trailing stops visibly trail.
+- A status row tracks balance, equity, floating PnL, and open/closed trade
+  counts; an equity + balance sub-chart below the candles stays synced to
+  the replay clock.
+- **Follow** keeps the chart scrolling with the newest bar; pan or zoom to
+  detach and inspect, tick Follow to snap back. The crosshair readout only
+  shows bars revealed so far — no peeking ahead.
+- When the run finishes, the toolbar shows the summary (trades, net,
+  profit factor, max drawdown). Full results panel lands in Phase 5.
+
+If a dataset was downloaded before contract-spec capture was added, the
+Backtest tab warns and assumes forex contract math — re-download the
+dataset (any small range; it merges) to attach the broker's real spec.
 
 ## Run a backtest (CLI)
 

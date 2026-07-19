@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from .candlestick_item import CandlestickItem
@@ -21,12 +21,16 @@ INITIAL_BARS = 300
 
 
 class ChartWidget(QWidget):
+    #: Emitted when auto-follow turns off because the user panned/zoomed.
+    follow_changed = Signal(bool)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._df: pd.DataFrame | None = None
         self._title = ""
         self._overlays: dict[str, pg.PlotDataItem] = {}
         self._color_cycle = 0
+        self._follow = True
 
         self.info_label = QLabel(" ")
         self.info_label.setStyleSheet(
@@ -45,6 +49,7 @@ class ChartWidget(QWidget):
         view_box.setMouseEnabled(x=True, y=False)
         view_box.enableAutoRange(y=True)
         view_box.setAutoVisible(y=True)
+        view_box.sigRangeChangedManually.connect(self._on_manual_range)
         self._view_box = view_box
 
         self._vline = pg.InfiniteLine(angle=90, pen=CROSSHAIR_PEN, movable=False)
@@ -92,6 +97,42 @@ class ChartWidget(QWidget):
     def df(self) -> pd.DataFrame | None:
         return self._df
 
+    # -------------------------------------------------------------- replay
+
+    def reveal_to(self, k: int) -> None:
+        """Show only the first ``k`` bars; scroll to keep the newest visible."""
+        self.candles.set_visible_length(k)
+        if k <= 0:
+            return
+        if self._follow:
+            (x0, x1), _ = self._view_box.viewRange()
+            width = max(x1 - x0, 10.0)
+            # Scroll only once the newest bar approaches the right edge.
+            if k - 1 > x1 - 2:
+                self.plot.setXRange(k - width, k + width * 0.02, padding=0)
+        self._update_info(k - 1)
+
+    def reveal_all(self) -> None:
+        self.candles.set_visible_length(None)
+
+    def set_follow(self, on: bool) -> None:
+        self._follow = on
+        if on:
+            k = self.candles.visible_length
+            if k > 0:
+                (x0, x1), _ = self._view_box.viewRange()
+                width = max(x1 - x0, 10.0)
+                self.plot.setXRange(k - width, k + width * 0.02, padding=0)
+
+    @property
+    def follow(self) -> bool:
+        return self._follow
+
+    def _on_manual_range(self, *_args) -> None:
+        if self._follow:
+            self._follow = False
+            self.follow_changed.emit(False)
+
     # ------------------------------------------------------------ overlays
 
     def add_overlay(self, name: str, values: np.ndarray) -> str:
@@ -133,7 +174,8 @@ class ChartWidget(QWidget):
             return
         point = self._view_box.mapSceneToView(pos)
         i = int(round(point.x()))
-        if 0 <= i < len(self._df):
+        # Clamp to revealed bars so the readout can't leak future data mid-replay.
+        if 0 <= i < self.candles.visible_length:
             self._vline.setPos(i)
             self._hline.setPos(point.y())
             self._vline.setVisible(True)
