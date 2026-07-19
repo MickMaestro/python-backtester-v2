@@ -112,8 +112,14 @@ class DataStore:
         timeframe: str,
         df: pd.DataFrame,
         source: str = "MT5",
+        spec: dict | None = None,
     ) -> DatasetInfo:
-        """Normalize and store bars, merging with any existing dataset."""
+        """Normalize and store bars, merging with any existing dataset.
+
+        ``spec`` optionally carries broker contract metadata
+        (point/digits/contract_size); when omitted, any spec already stored
+        for this dataset is preserved.
+        """
         symbol = symbol.strip().upper()
         if not symbol:
             raise StoreError("Symbol name is empty.")
@@ -126,6 +132,16 @@ class DataStore:
             df = normalize_bars(pd.concat([existing, df], ignore_index=True))
         df.to_parquet(path, index=False)
 
+        catalog = self._read_catalog()
+        previous = catalog.get(self._key(symbol, tf.value))
+        if spec is None and previous is not None:
+            spec = {
+                "point": previous.point,
+                "digits": previous.digits,
+                "contract_size": previous.contract_size,
+            }
+        spec = spec or {}
+
         info = DatasetInfo(
             symbol=symbol,
             timeframe=tf.value,
@@ -135,8 +151,10 @@ class DataStore:
             source=source,
             saved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             filename=path.name,
+            point=spec.get("point"),
+            digits=spec.get("digits"),
+            contract_size=spec.get("contract_size"),
         )
-        catalog = self._read_catalog()
         catalog[info.key] = info
         self._write_catalog(catalog)
         return info

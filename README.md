@@ -11,7 +11,9 @@ See [PLAN.md](PLAN.md) for the full development plan.
 
 - [x] **Phase 1 — Data layer**: MT5 connection, bar download, local Parquet
       library with CSV import/export, Data Manager GUI
-- [ ] Phase 2 — Backtest engine (headless): broker simulation, orders, PnL, stats
+- [x] **Phase 2 — Backtest engine (headless)**: simulated broker (market /
+      limit / stop orders, SL/TP, spread, commission, swap), strategy API
+      with indicators, performance stats, CLI runner
 - [ ] Phase 3 — Candlestick chart (pyqtgraph): pan/zoom, crosshair, indicators
 - [ ] Phase 4 — Visual replay: playback controls, live trade drawing
 - [ ] Phase 5 — Results panel, fast-run mode, report export
@@ -41,6 +43,60 @@ python app.py
 Open the **Data Manager** tab, click *Connect to MT5*, pick a symbol,
 timeframe, and date range, then *Download*. Datasets are stored as Parquet
 files in `data_library/` and can be exported to or imported from CSV.
+Downloads also capture the symbol's contract spec (point size, digits,
+contract size) so backtest PnL is computed correctly for forex pairs,
+indices, metals, etc.
+
+## Run a backtest (CLI)
+
+The engine is GUI-independent; until the chart phases land, run it from the
+command line against any dataset in your library:
+
+```powershell
+python run_backtest.py EURUSD H1
+python run_backtest.py GER40 H1 --strategy ma_cross --param fast=12 --param slow=48 --trades 10
+python run_backtest.py XAUUSD M15 --strategy rsi_reversion --commission 7 --balance 5000
+```
+
+Built-in example strategies: `ma_cross`, `rsi_reversion`. A strategy is a
+small Python class:
+
+```python
+from backtester.strategy.base import Strategy
+
+class MaCross(Strategy):
+    params = {"fast": 10, "slow": 30, "lots": 0.1, "sl_pips": 50.0, "tp_pips": 100.0}
+
+    def init(self):
+        self.fast_ma = self.ind.sma(self.p.fast)
+        self.slow_ma = self.ind.sma(self.p.slow)
+
+    def on_bar(self, bar):
+        if self.cross_over(self.fast_ma, self.slow_ma):
+            self.close_all()
+            self.buy(lots=self.p.lots, sl_pips=self.p.sl_pips, tp_pips=self.p.tp_pips)
+        elif self.cross_under(self.fast_ma, self.slow_ma):
+            self.close_all()
+            self.sell(lots=self.p.lots, sl_pips=self.p.sl_pips, tp_pips=self.p.tp_pips)
+```
+
+Available: `buy/sell` (market, fills next bar open), `buy_limit/sell_limit/
+buy_stop/sell_stop`, `modify` (SL/TP, e.g. trailing stops), `close/close_all`,
+indicators via `self.ind` (`sma, ema, rsi, atr, highest, lowest`), and
+`cross_over/cross_under` helpers.
+
+### Execution model
+
+- Bars are **bid** prices (MT5 convention): longs open at ask (bid + spread)
+  and close at bid; shorts the reverse. Spread comes from the data's spread
+  column, or a fixed `--spread` in points.
+- Strategy decisions happen on a bar's close; market orders fill at the next
+  bar's open. SL/TP and pending triggers are evaluated against each bar's
+  high/low; a level gapped over at the open fills at the open.
+- If SL and TP both fall inside one bar, **SL is assumed to hit first**
+  (pessimistic — OHLC bars can't reveal the intrabar path). Phase 6 adds
+  tick/M1-based resolution.
+- Commission is charged per side per lot; swap accrues per night held.
 
 ## Tests
 

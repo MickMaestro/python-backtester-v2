@@ -63,6 +63,11 @@ class DatasetInfo:
     source: str
     saved_at: str
     filename: str
+    # Instrument contract spec captured from MT5 at download time (None for
+    # CSV imports or datasets saved before this field existed).
+    point: float | None = None
+    digits: int | None = None
+    contract_size: float | None = None
 
     @property
     def key(self) -> str:

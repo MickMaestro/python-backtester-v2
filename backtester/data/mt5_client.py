@@ -89,6 +89,17 @@ class MT5Client:
         symbols = _mt5().symbols_get()
         return sorted(s.name for s in symbols or [])
 
+    def symbol_spec(self, symbol: str) -> dict[str, float] | None:
+        """Contract metadata for the symbol, or None if unavailable."""
+        info = _mt5().symbol_info(symbol)
+        if info is None:
+            return None
+        return {
+            "point": info.point,
+            "digits": info.digits,
+            "contract_size": info.trade_contract_size,
+        }
+
     def download_bars(
         self,
         symbol: str,

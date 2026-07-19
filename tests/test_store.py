@@ -89,6 +89,16 @@ def test_mt5_style_csv_import(store, tmp_path):
     assert loaded["tick_volume"].iloc[0] == 180943
 
 
+def test_spec_persisted_and_preserved_on_merge(store):
+    spec = {"point": 0.01, "digits": 2, "contract_size": 1.0}
+    info = store.save_bars("GER40", "H1", make_bars(20), spec=spec)
+    assert (info.point, info.digits, info.contract_size) == (0.01, 2, 1.0)
+
+    # A later save without a spec (e.g. CSV append) keeps the stored one.
+    info = store.save_bars("GER40", "H1", make_bars(10, start="2024-02-01"))
+    assert (info.point, info.digits, info.contract_size) == (0.01, 2, 1.0)
+
+
 def test_delete_removes_file_and_catalog(store):
     store.save_bars("EURUSD", "H1", make_bars(10))
     filename = store.get("EURUSD", "H1").filename

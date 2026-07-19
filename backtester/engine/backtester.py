@@ -1,0 +1,165 @@
+"""The backtest event loop.
+
+``Backtester.run()`` is a generator yielding engine events (see events.py):
+per bar a ``BarEvent``, any order/position events, then one ``EquityEvent``.
+The replay UI steps this generator on a timer; ``run_all()`` drains it as
+fast as possible and returns a ``BacktestResult``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Iterator
+
+import numpy as np
+import pandas as pd
+
+from .broker import SimBroker
+from .events import BarEvent, EquityEvent
+from .instrument import InstrumentSpec
+from .orders import CloseReason
+from .stats import compute_stats
+
+_REQUIRED = ("time", "open", "high", "low", "close")
+
+
+@dataclass
+class BacktestConfig:
+    initial_balance: float = 10_000.0
+    spread_points: int | None = None    # None → use the data's spread column
+    commission_per_lot: float = 0.0     # per side, account currency
+    swap_long: float = 0.0              # per lot per night, account currency
+    swap_short: float = 0.0
+    instrument: InstrumentSpec = field(default_factory=InstrumentSpec.forex_major)
+
+
+@dataclass
+class BacktestResult:
+    initial_balance: float
+    final_balance: float
+    trades: list
+    equity: pd.DataFrame                # columns: time, balance, equity
+    stats: dict
+
+    @property
+    def net_profit(self) -> float:
+        return self.final_balance - self.initial_balance
+
+
+class Backtester:
+    def __init__(self, df: pd.DataFrame, strategy, config: BacktestConfig | None = None):
+        missing = [c for c in _REQUIRED if c not in df.columns]
+        if missing:
+            raise ValueError(f"Data is missing column(s): {', '.join(missing)}")
+        if len(df) == 0:
+            raise ValueError("Data is empty.")
+
+        self.df = df.reset_index(drop=True)
+        self.config = config or BacktestConfig()
+
+        self.time = self.df["time"].to_numpy()
+        self.open = self.df["open"].to_numpy(dtype=float)
+        self.high = self.df["high"].to_numpy(dtype=float)
+        self.low = self.df["low"].to_numpy(dtype=float)
+        self.close = self.df["close"].to_numpy(dtype=float)
+        if self.config.spread_points is not None:
+            self.spread = np.full(len(self.df), self.config.spread_points, dtype=float)
+        elif "spread" in self.df.columns:
+            self.spread = self.df["spread"].to_numpy(dtype=float)
+        else:
+            self.spread = np.zeros(len(self.df))
+
+        self.broker = SimBroker(
+            spec=self.config.instrument,
+            initial_balance=self.config.initial_balance,
+            commission_per_lot=self.config.commission_per_lot,
+            swap_long=self.config.swap_long,
+            swap_short=self.config.swap_short,
+        )
+        self.strategy = strategy
+        strategy.bind(self.df, self.broker)
+
+        self._equity_rows: list[tuple[Any, float, float]] = []
+        self._finished = False
+
+    # ---------------------------------------------------------------- run
+
+    def run(self) -> Iterator[Any]:
+        """Yield engine events bar by bar (see module docstring)."""
+        broker = self.broker
+        # Nights held = calendar days crossed between consecutive bar times.
+        days = self.time.astype("datetime64[D]").astype("int64")
+
+        self.strategy.init()
+        n = len(self.df)
+        stopped_out = False
+
+        for i in range(n):
+            o, h, l, c = self.open[i], self.high[i], self.low[i], self.close[i]
+            ask_off = self.spread[i] * self.config.instrument.point
+
+            broker.begin_bar(i, self.time[i])
+            yield BarEvent(i, self.time[i], o, h, l, c)
+
+            if i > 0:
+                broker.apply_swap(int(days[i] - days[i - 1]))
+            broker.process_open(o, ask_off)
+            broker.process_pending(o, h, l, c, ask_off)
+            broker.process_sl_tp(o, h, l, c, ask_off)
+            yield from self._drain()
+
+            self.strategy.step(i)
+            yield from self._drain()
+
+            equity = broker.equity(c, ask_off)
+            if equity <= 0:
+                broker.close_all_now(c, ask_off, CloseReason.STOP_OUT)
+                yield from self._drain()
+                equity = broker.balance
+                stopped_out = True
+
+            self._equity_rows.append((self.time[i], broker.balance, equity))
+            yield EquityEvent(i, self.time[i], broker.balance, equity)
+
+            if stopped_out:
+                break
+
+        if not stopped_out and (broker.positions or broker.pending):
+            last = n - 1
+            ask_off = self.spread[last] * self.config.instrument.point
+            had_positions = bool(broker.positions)
+            broker.close_all_now(self.close[last], ask_off, CloseReason.END_OF_DATA)
+            yield from self._drain()
+            if had_positions:
+                self._equity_rows[-1] = (self.time[last], broker.balance, broker.balance)
+                yield EquityEvent(last, self.time[last], broker.balance, broker.balance)
+
+        self._finished = True
+
+    def run_all(self) -> BacktestResult:
+        for _ in self.run():
+            pass
+        return self.result()
+
+    def result(self) -> BacktestResult:
+        if not self._finished:
+            raise RuntimeError("Backtest has not finished; call run_all() or drain run().")
+        equity = pd.DataFrame(
+            self._equity_rows, columns=["time", "balance", "equity"]
+        )
+        return BacktestResult(
+            initial_balance=self.config.initial_balance,
+            final_balance=self.broker.balance,
+            trades=list(self.broker.trades),
+            equity=equity,
+            stats=compute_stats(
+                self.broker.trades, equity, self.config.initial_balance
+            ),
+        )
+
+    # ------------------------------------------------------------ helpers
+
+    def _drain(self):
+        events = self.broker.events[:]
+        self.broker.events.clear()
+        return events

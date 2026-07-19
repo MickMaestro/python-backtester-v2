@@ -62,7 +62,10 @@ class DownloadWorker(QThread):
             df = self._client.download_bars(
                 self._symbol, self._timeframe, self._start, self._end
             )
-            info = self._store.save_bars(self._symbol, self._timeframe, df, source="MT5")
+            spec = self._client.symbol_spec(self._symbol)
+            info = self._store.save_bars(
+                self._symbol, self._timeframe, df, source="MT5", spec=spec
+            )
         except (MT5Error, StoreError) as exc:
             self.failed.emit(str(exc))
         except Exception as exc:  # keep the UI alive on unexpected errors
