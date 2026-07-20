@@ -9,7 +9,7 @@ sub-chart synced to the replay clock.
 from __future__ import annotations
 
 import pyqtgraph as pg
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -32,13 +33,20 @@ from backtester.engine.backtester import BacktestConfig, Backtester
 from backtester.engine.events import BarEvent, EquityEvent
 from backtester.engine.instrument import InstrumentSpec
 from backtester.strategy import loader
+from backtester.strategy.manual import ManualStrategy
 from backtester.ui.chart.chart_widget import BACKGROUND, ChartWidget
 from backtester.ui.chart.replay_controller import ReplayController
 from backtester.ui.chart.trade_markers import TradeLayer
+from backtester.ui.manual_panel import ManualPanel
+from backtester.ui.manual_trader import ManualTrader
 from backtester.ui.settings import app_settings, cast_like
 
-SPEEDS = [1, 2, 5, 10, 25, 50, 100, 250]
 INITIAL_WINDOW = 300
+#: Bars played before a manual session hands over, so there is context to trade.
+WARMUP_BARS = 100
+
+MODE_STRATEGY = "Strategy replay"
+MODE_MANUAL = "Manual trading"
 
 
 class FastRunWorker(QThread):
@@ -116,10 +124,13 @@ class BacktestTab(QWidget):
 
         self.dataset_combo = QComboBox()
         self.dataset_combo.currentTextChanged.connect(self._on_dataset_changed)
-        self.strategy_combo = QComboBox()
-        self.strategy_combo.currentTextChanged.connect(self._rebuild_param_form)
-        reload_button = QPushButton("Reload strategies")
-        reload_button.clicked.connect(self.reload_strategies)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems([MODE_STRATEGY, MODE_MANUAL])
+        self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
+        self.mode_combo.setToolTip(
+            "Strategy replay: watch a strategy trade.\n"
+            "Manual trading: place and manage the trades yourself as it plays."
+        )
         self.intrabar_combo = QComboBox()
         self.intrabar_combo.addItem("Off (main TF only)")
         self.intrabar_combo.setToolTip(
@@ -130,9 +141,17 @@ class BacktestTab(QWidget):
         data_group = QGroupBox("Setup")
         data_form = QFormLayout(data_group)
         data_form.addRow("Dataset:", self.dataset_combo)
-        data_form.addRow("Strategy:", self.strategy_combo)
-        data_form.addRow(reload_button)
+        data_form.addRow("Mode:", self.mode_combo)
         data_form.addRow("Intrabar:", self.intrabar_combo)
+
+        self.strategy_combo = QComboBox()
+        self.strategy_combo.currentTextChanged.connect(self._rebuild_param_form)
+        reload_button = QPushButton("Reload strategies")
+        reload_button.clicked.connect(self.reload_strategies)
+        self.strategy_group = QGroupBox("Strategy")
+        strategy_form = QFormLayout(self.strategy_group)
+        strategy_form.addRow("Strategy:", self.strategy_combo)
+        strategy_form.addRow(reload_button)
 
         self.params_group = QGroupBox("Strategy Parameters")
         self.params_form = QFormLayout(self.params_group)
@@ -176,14 +195,44 @@ class BacktestTab(QWidget):
         run_row.addWidget(self.start_button)
         run_row.addWidget(self.fast_button)
 
+        self.manual_panel = ManualPanel()
+        self.manual_panel.setVisible(False)
+
         column.addWidget(data_group)
+        column.addWidget(self.strategy_group)
         column.addWidget(self.params_group)
         column.addWidget(account_group)
         column.addLayout(run_row)
         column.addWidget(self.reset_button)
+        column.addWidget(self.manual_panel)
         column.addWidget(self.setup_note)
         column.addStretch()
         return panel
+
+    # ---------------------------------------------------------------- mode
+
+    @property
+    def is_manual(self) -> bool:
+        return self.mode_combo.currentText() == MODE_MANUAL
+
+    def _on_mode_changed(self, _mode: str) -> None:
+        """Swap the setup panel between picking a strategy and trading by hand."""
+        manual = self.is_manual
+        self.strategy_group.setVisible(not manual)
+        self.params_group.setVisible(not manual)
+        self.manual_panel.setVisible(manual)
+        # A fast run has nothing to drive in manual mode — you are the strategy.
+        self.fast_button.setVisible(not manual)
+        self.start_button.setText(
+            "▶  Start Manual Session" if manual else "▶  Start Replay"
+        )
+        self._stop_controller()
+        self.manual.detach()
+        self._clear_run_visuals()
+        if self._df is not None:
+            self.chart.set_data(
+                self._df, title=(self._loaded_key or "").replace("_", " ")
+            )
 
     def _build_replay_side(self) -> QVBoxLayout:
         self.play_button = QPushButton("Play")
@@ -195,10 +244,12 @@ class BacktestTab(QWidget):
         self.ff_button = QPushButton("To End")
         self.ff_button.setFixedWidth(70)
         self.ff_button.clicked.connect(self._fast_forward)
-        self.speed_combo = QComboBox()
-        self.speed_combo.addItems([f"{s} bars/s" for s in SPEEDS])
-        self.speed_combo.setCurrentIndex(3)  # 10 bars/s
-        self.speed_combo.currentIndexChanged.connect(self._on_speed_changed)
+        self.speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.speed_slider.setRange(1, 250)
+        self.speed_slider.setValue(10)
+        self.speed_slider.setFixedWidth(150)
+        self.speed_slider.valueChanged.connect(self._on_speed_changed)
+        self.speed_label = QLabel("10 bars/s")
         self.follow_check = QCheckBox("Follow")
         self.follow_check.setChecked(True)
         self.follow_check.toggled.connect(self._on_follow_toggled)
@@ -213,7 +264,9 @@ class BacktestTab(QWidget):
         toolbar.addWidget(self.play_button)
         toolbar.addWidget(self.step_button)
         toolbar.addWidget(self.ff_button)
-        toolbar.addWidget(self.speed_combo)
+        toolbar.addWidget(QLabel("Speed:"))
+        toolbar.addWidget(self.speed_slider)
+        toolbar.addWidget(self.speed_label)
         toolbar.addWidget(self.follow_check)
         toolbar.addSpacing(16)
         toolbar.addWidget(self.progress_label)
@@ -228,6 +281,12 @@ class BacktestTab(QWidget):
         self.chart = ChartWidget()
         self.chart.follow_changed.connect(self.follow_check.setChecked)
         self.trade_layer = TradeLayer(self.chart.plot.getPlotItem())
+        self.manual = ManualTrader(
+            self.chart.plot.getPlotItem(), self.manual_panel, parent=self
+        )
+        self.manual.warning.connect(
+            lambda message: QMessageBox.warning(self, "Order", message)
+        )
 
         self.equity_plot = pg.PlotWidget()
         self.equity_plot.setBackground(BACKGROUND)
@@ -330,15 +389,18 @@ class BacktestTab(QWidget):
         if self._df is None or len(self._df) == 0:
             QMessageBox.information(self, "Backtest", "Load a dataset first.")
             return None
-        strategy_cls = self._strategy_class()
-        if strategy_cls is None:
-            QMessageBox.information(self, "Backtest", "Pick a strategy first.")
-            return None
-        try:
-            strategy = strategy_cls(**self._collect_params())
-        except ValueError as exc:
-            QMessageBox.warning(self, "Backtest", str(exc))
-            return None
+        if self.is_manual:
+            strategy = ManualStrategy()  # you place the orders, not a strategy
+        else:
+            strategy_cls = self._strategy_class()
+            if strategy_cls is None:
+                QMessageBox.information(self, "Backtest", "Pick a strategy first.")
+                return None
+            try:
+                strategy = strategy_cls(**self._collect_params())
+            except ValueError as exc:
+                QMessageBox.warning(self, "Backtest", str(exc))
+                return None
         config = BacktestConfig(
             initial_balance=self.balance_spin.value(),
             spread_points=(
@@ -384,9 +446,11 @@ class BacktestTab(QWidget):
         self.intrabar_combo.blockSignals(False)
 
     def _run_title(self) -> str:
+        dataset = (self._loaded_key or "").replace("_", " ")
+        if self.is_manual:
+            return f"{dataset} — manual session"
         return (
-            f"{(self._loaded_key or '').replace('_', ' ')} — "
-            f"{self.strategy_combo.currentText()} {self._collect_params()}"
+            f"{dataset} — {self.strategy_combo.currentText()} {self._collect_params()}"
         )
 
     def _start(self) -> None:
@@ -408,12 +472,20 @@ class BacktestTab(QWidget):
         self._controller.state_changed.connect(
             lambda playing: self.play_button.setText("Pause" if playing else "Play")
         )
-        self._on_speed_changed(self.speed_combo.currentIndex())
+        self._on_speed_changed(self.speed_slider.value())
 
         for button in (self.play_button, self.step_button, self.ff_button):
             button.setEnabled(True)
         self.badge_label.setText(" ")
-        self._controller.play()
+
+        if self.is_manual:
+            # Play a warm-up so there is price history to trade from, then hand
+            # over paused — the trader decides when to advance.
+            self.manual.attach(backtester.broker, self._instrument(), self._df)
+            self._controller.advance(min(WARMUP_BARS, len(self._df) // 2))
+            self.chart.set_follow(self.follow_check.isChecked())
+        else:
+            self._controller.play()
 
     def _run_fast(self) -> None:
         backtester = self._make_backtester()
@@ -491,10 +563,12 @@ class BacktestTab(QWidget):
 
     def _on_events(self, events: list) -> None:
         last_bar = -1
+        last_close = None
         balance = equity = None
         for event in events:
             if isinstance(event, BarEvent):
                 last_bar = max(last_bar, event.index)
+                last_close = event.close
             elif isinstance(event, EquityEvent):
                 self._equity_x.append(event.index)
                 self._equity_balance.append(event.balance)
@@ -514,12 +588,15 @@ class BacktestTab(QWidget):
                 f"Open {self.trade_layer.open_count}   "
                 f"Closed {self.trade_layer.closed_count}"
             )
+        if self.manual.active and last_close is not None:
+            self.manual.on_bars_advanced(last_bar, last_close)
 
     def _on_progress(self, done: int, total: int) -> None:
         self.progress_label.setText(f"Bar {done:,} / {total:,}")
 
     def _on_finished(self, result) -> None:
         self.result = result
+        self.manual.detach()  # session over — no more orders
         self._show_summary(result)
         self.play_button.setText("Play")
         self.play_button.setEnabled(False)
@@ -578,15 +655,17 @@ class BacktestTab(QWidget):
         if self._controller is not None:
             self._controller.fast_forward()
 
-    def _on_speed_changed(self, index: int) -> None:
-        if self._controller is not None and 0 <= index < len(SPEEDS):
-            self._controller.set_speed(SPEEDS[index])
+    def _on_speed_changed(self, value: int) -> None:
+        self.speed_label.setText(f"{value} bars/s")
+        if self._controller is not None:
+            self._controller.set_speed(float(value))
 
     def _on_follow_toggled(self, checked: bool) -> None:
         self.chart.set_follow(checked)
 
     def _reset(self) -> None:
         self._stop_controller()
+        self.manual.detach()
         self._clear_run_visuals()
         if self._df is not None:
             self.chart.set_data(self._df, title=(self._loaded_key or "").replace("_", " "))
@@ -604,7 +683,8 @@ class BacktestTab(QWidget):
         )
         settings.setValue("backtest/spread", self.spread_spin.value())
         settings.setValue("backtest/commission", self.commission_spin.value())
-        settings.setValue("backtest/speed_index", self.speed_combo.currentIndex())
+        settings.setValue("backtest/speed", self.speed_slider.value())
+        settings.setValue("backtest/mode", self.mode_combo.currentText())
         strategy = self.strategy_combo.currentText()
         for name, value in self._collect_params().items():
             settings.setValue(f"params/{strategy}/{name}", value)
@@ -628,9 +708,12 @@ class BacktestTab(QWidget):
         self.commission_spin.setValue(
             cast_like(settings.value("backtest/commission"), 0.0)
         )
-        speed_index = cast_like(settings.value("backtest/speed_index"), 3)
-        if 0 <= speed_index < self.speed_combo.count():
-            self.speed_combo.setCurrentIndex(speed_index)
+        speed = cast_like(settings.value("backtest/speed"), 10)
+        if self.speed_slider.minimum() <= speed <= self.speed_slider.maximum():
+            self.speed_slider.setValue(speed)
+        mode = str(settings.value("backtest/mode", "") or "")
+        if mode and self.mode_combo.findText(mode) >= 0:
+            self.mode_combo.setCurrentText(mode)
 
     # ----------------------------------------------------------- lifecycle
 

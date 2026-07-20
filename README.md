@@ -31,8 +31,8 @@ See [PLAN.md](PLAN.md) for the full development plan.
 **v2 in progress:**
 
 - [x] Applied price for indicators (Close/Open/High/Low/Median/Typical/Weighted)
-- [x] Manual trading mode — trade the replay by hand with draggable
-      entry/TP/SL lines, risk-based sizing, and a speed slider
+- [x] Manual trading mode — a Backtest-tab mode where you trade the replay by
+      hand with draggable entry/TP/SL lines, risk-based sizing, and a speed slider
 - [ ] Optional entry/exit trade screenshots
 
 Possible future work: multi-symbol portfolio backtests (needs a
@@ -113,13 +113,17 @@ candles, every trade marker, full equity curve) and opens the Results tab.
 Hit *Start Replay* afterwards to watch the same run animated — runs are
 deterministic.
 
-## Manual tab (trade the replay by hand)
+## Manual trading (an alternative to watching the replay)
 
-Instead of a strategy, trade the chart yourself as it replays — useful for
-practising a discretionary approach or sanity-checking a market.
+The Backtest tab's **Mode** selector chooses how a run plays out:
 
-Pick a dataset, set balance/spread/commission, and hit **Start session**. The
-replay warms up ~100 bars so you have context, then hands over **paused**:
+- **Strategy replay** — watch a strategy trade (everything described above).
+- **Manual trading** — *you* place and manage the trades as the chart replays.
+
+Switching to Manual swaps the strategy picker and parameter form for an
+order-entry panel (*Run Fast* disappears — you're the strategy now). Set
+balance/spread/commission as usual and hit **Start Manual Session**: the replay
+warms up ~100 bars so you have context, then hands over **paused**:
 
 - **Three draggable lines** set the trade: **Entry** (pending orders only),
   **Take profit**, and **Stop loss**. TP and SL each have a checkbox — a trade
@@ -135,13 +139,14 @@ replay warms up ~100 bars so you have context, then hands over **paused**:
 - **Manage the trade**: drag the SL/TP lines to move them on the live position
   (the same call a strategy's trailing stop makes), **Close position** to exit
   at the next open, or **Cancel pending**.
-- **Playback**: Play/Pause, **Next candle** to step one bar at a time, and a
-  **speed slider** (1–100 bars/s). *Follow* keeps the chart scrolling with price.
+- **Playback** is the same toolbar as the strategy replay: Play/Pause, **Step**
+  one candle at a time, and a **speed slider** (1–250 bars/s), with *Follow*
+  keeping the chart on price.
 
 Orders go through the same simulated broker as automated strategies, so fills,
 SL/TP, spread, commission, swap, and the equity curve behave identically. When
 the replay reaches the end of the data, the session's trades and statistics
-open in the Results tab.
+open in the Results tab, labelled as a manual session.
 
 > Sizing depends on the instrument's contract spec. If a dataset was downloaded
 > before spec capture existed, the tab says so and falls back to forex maths —

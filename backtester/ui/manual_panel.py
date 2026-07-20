@@ -1,6 +1,6 @@
 """Manual order-entry panel: order type, risk sizing, and trade management.
 
-Pure UI — it reports what the user wants; :class:`~backtester.ui.manual_tab.ManualTab`
+Pure UI — it reports what the user wants; :class:`~backtester.ui.manual_trader.ManualTrader`
 does the sizing math and talks to the broker.
 """
 

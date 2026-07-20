@@ -212,21 +212,21 @@ series, not just a raw column.
 
 ### 7b. Manual trading mode
 
-A dedicated **Manual tab** running a `ManualStrategy` whose `on_bar` does nothing; the GUI
-injects the user's orders straight into the simulated broker, so fills, SL/TP, spread,
-commission, swap, equity, stats, and results all reuse the existing engine.
+A **Mode** selector in the Backtest tab — *Strategy replay* (watch a strategy trade) vs
+*Manual trading* (trade it yourself). Manual trading is an **alternative to watching the
+standard replay**, not a separate screen: same tab, same chart, same playback, same results.
+It runs a `ManualStrategy` whose `on_bar` does nothing, and the GUI injects the user's
+orders straight into the simulated broker, so fills, SL/TP, spread, commission, swap,
+equity, stats, and results all reuse the existing engine.
 
-> *Rectified from the original sketch (a mode toggle inside the Backtest tab).* A separate
-> tab keeps the tested automatic backtest untouched and each screen focused; it composes the
-> existing `ChartWidget`, `TradeLayer`, `ReplayController`, and equity plot rather than
-> duplicating engine logic. The only cost is a similar-looking playback toolbar, which
-> differs anyway (speed **slider** + order entry vs the automatic tab's speed combo).
+Choosing *Manual* swaps the setup panel: the strategy picker and parameter form give way to
+the order-entry panel, and *Run Fast* is hidden (there is nothing to fast-run when you are
+the strategy). The order logic lives in `manual_trader.py` so the tab itself stays readable.
 
-**Session lifecycle.** *Start* builds `Backtester(df, ManualStrategy(), config)` and a
-`ReplayController`, advances a **warm-up** of ~100 bars so there is price history for
-context, then **pauses** — the user trades forward from there. Reaching the end of data
-force-closes open positions (as usual) and emits the run to the Results tab. *Restart*
-rebuilds a fresh session.
+**Session lifecycle.** *Start Manual Session* builds `Backtester(df, ManualStrategy(),
+config)` and a `ReplayController`, advances a **warm-up** of ~100 bars so there is price
+history for context, then **pauses** — the user trades forward from there. Reaching the end
+of data force-closes open positions (as usual) and reports the run to the Results tab.
 
 **How orders reach the engine.** The replay already steps the engine generator bar-by-bar
 on the main thread via `ReplayController`. `ManualStrategy` (or `Backtester`) exposes its
