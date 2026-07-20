@@ -67,7 +67,9 @@ Pick any dataset from the library in the **Chart** tab and browse it:
   whatever is visible.
 - Crosshair follows the mouse with a time + OHLC + volume readout above the
   chart.
-- Overlay SMA/EMA lines with any period (Add / Clear in the toolbar).
+- Overlay SMA/EMA lines with any period and a chosen **applied price**
+  (*Apply to*: Close, Open, High, Low, Median, Typical, Weighted) — Add /
+  Clear in the toolbar.
 - The X axis is bar-index based, so weekends and session gaps don't leave
   holes in the chart. Zoomed far out, candles switch to a close-price line
   for speed; zoom in and candles return.
@@ -199,6 +201,12 @@ buy_stop/sell_stop`, `modify(position, sl=…, tp=…)` (e.g. trailing stops),
 atr, highest, lowest`), and `cross_over/cross_under` helpers. Price series are
 `self.opens/highs/lows/closes` and `self.time` (plural, so they don't shadow
 the `self.close(position)` method); the current bar index is `self.i`.
+
+Price-based indicators take an **applied price** — `self.ind.ema(20,
+applied=AppliedPrice.TYPICAL)` (`from backtester.strategy.indicators import
+AppliedPrice`). Options: `CLOSE` (default), `OPEN`, `HIGH`, `LOW`, `MEDIAN`
+(HL/2), `TYPICAL` (HLC/3), `WEIGHTED` (HLCC/4). ATR is High/Low/Close-based
+and ignores it.
 
 ### Execution model
 

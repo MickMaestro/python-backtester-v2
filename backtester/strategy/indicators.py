@@ -3,8 +3,59 @@ with NaN where the indicator is not yet defined."""
 
 from __future__ import annotations
 
+from enum import Enum
+
 import numpy as np
 import pandas as pd
+
+
+class AppliedPrice(Enum):
+    """Price an indicator is computed on (MT5's applied-price conventions)."""
+
+    CLOSE = "close"
+    OPEN = "open"
+    HIGH = "high"
+    LOW = "low"
+    MEDIAN = "median"      # (High + Low) / 2
+    TYPICAL = "typical"    # (High + Low + Close) / 3
+    WEIGHTED = "weighted"  # (High + Low + 2*Close) / 4
+
+    @property
+    def label(self) -> str:
+        return _APPLIED_LABELS[self]
+
+    @property
+    def short(self) -> str:
+        return self.name.title()
+
+
+_APPLIED_LABELS = {
+    AppliedPrice.CLOSE: "Close",
+    AppliedPrice.OPEN: "Open",
+    AppliedPrice.HIGH: "High",
+    AppliedPrice.LOW: "Low",
+    AppliedPrice.MEDIAN: "Median (HL/2)",
+    AppliedPrice.TYPICAL: "Typical (HLC/3)",
+    AppliedPrice.WEIGHTED: "Weighted (HLCC/4)",
+}
+
+
+def price_series(df: pd.DataFrame, applied: AppliedPrice | str = AppliedPrice.CLOSE) -> np.ndarray:
+    """The chosen applied-price series from a bar DataFrame."""
+    applied = AppliedPrice(applied) if not isinstance(applied, AppliedPrice) else applied
+    o = df["open"].to_numpy(dtype=float)
+    h = df["high"].to_numpy(dtype=float)
+    l = df["low"].to_numpy(dtype=float)
+    c = df["close"].to_numpy(dtype=float)
+    return {
+        AppliedPrice.CLOSE: c,
+        AppliedPrice.OPEN: o,
+        AppliedPrice.HIGH: h,
+        AppliedPrice.LOW: l,
+        AppliedPrice.MEDIAN: (h + l) / 2.0,
+        AppliedPrice.TYPICAL: (h + l + c) / 3.0,
+        AppliedPrice.WEIGHTED: (h + l + 2.0 * c) / 4.0,
+    }[applied]
 
 
 def sma(values: np.ndarray, period: int) -> np.ndarray:
@@ -54,7 +105,12 @@ def lowest(values: np.ndarray, period: int) -> np.ndarray:
 
 
 class IndicatorFactory:
-    """Bound to a bar DataFrame; used by strategies as ``self.ind.sma(20)``."""
+    """Bound to a bar DataFrame; used by strategies as ``self.ind.sma(20)``.
+
+    Price-based indicators take an ``applied`` price (an :class:`AppliedPrice`,
+    or its string value / a raw column name for back-compat), e.g.
+    ``self.ind.ema(20, applied=AppliedPrice.TYPICAL)``.
+    """
 
     def __init__(self, df: pd.DataFrame) -> None:
         self._df = df
@@ -62,20 +118,30 @@ class IndicatorFactory:
     def _source(self, name: str) -> np.ndarray:
         return self._df[name].to_numpy(dtype=float)
 
-    def sma(self, period: int, source: str = "close") -> np.ndarray:
-        return sma(self._source(source), period)
+    def _series(self, applied) -> np.ndarray:
+        if isinstance(applied, AppliedPrice):
+            return price_series(self._df, applied)
+        key = str(applied).lower()
+        try:
+            return price_series(self._df, AppliedPrice(key))
+        except ValueError:
+            return self._source(applied)  # raw column name
 
-    def ema(self, period: int, source: str = "close") -> np.ndarray:
-        return ema(self._source(source), period)
+    def sma(self, period: int, applied=AppliedPrice.CLOSE) -> np.ndarray:
+        return sma(self._series(applied), period)
 
-    def rsi(self, period: int = 14, source: str = "close") -> np.ndarray:
-        return rsi(self._source(source), period)
+    def ema(self, period: int, applied=AppliedPrice.CLOSE) -> np.ndarray:
+        return ema(self._series(applied), period)
+
+    def rsi(self, period: int = 14, applied=AppliedPrice.CLOSE) -> np.ndarray:
+        return rsi(self._series(applied), period)
 
     def atr(self, period: int = 14) -> np.ndarray:
+        # ATR is intrinsically High/Low/Close-based; applied price does not apply.
         return atr(self._source("high"), self._source("low"), self._source("close"), period)
 
-    def highest(self, period: int, source: str = "high") -> np.ndarray:
-        return highest(self._source(source), period)
+    def highest(self, period: int, applied=AppliedPrice.HIGH) -> np.ndarray:
+        return highest(self._series(applied), period)
 
-    def lowest(self, period: int, source: str = "low") -> np.ndarray:
-        return lowest(self._source(source), period)
+    def lowest(self, period: int, applied=AppliedPrice.LOW) -> np.ndarray:
+        return lowest(self._series(applied), period)

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from backtester.data.store import DataStore, StoreError
 from backtester.strategy import indicators
+from backtester.strategy.indicators import AppliedPrice
 from backtester.ui.chart.chart_widget import ChartWidget
 
 _INDICATORS = {"SMA": indicators.sma, "EMA": indicators.ema}
@@ -35,6 +36,9 @@ class ChartTab(QWidget):
         self.period_spin = QSpinBox()
         self.period_spin.setRange(2, 500)
         self.period_spin.setValue(20)
+        self.applied_combo = QComboBox()
+        for applied in AppliedPrice:
+            self.applied_combo.addItem(applied.label, applied)
         add_button = QPushButton("Add")
         add_button.clicked.connect(self._add_indicator)
         clear_button = QPushButton("Clear")
@@ -49,6 +53,8 @@ class ChartTab(QWidget):
         top.addWidget(QLabel("Indicator:"))
         top.addWidget(self.indicator_combo)
         top.addWidget(self.period_spin)
+        top.addWidget(QLabel("Apply to:"))
+        top.addWidget(self.applied_combo)
         top.addWidget(add_button)
         top.addWidget(clear_button)
         top.addWidget(self.overlay_label)
@@ -101,11 +107,12 @@ class ChartTab(QWidget):
             return
         kind = self.indicator_combo.currentText()
         period = self.period_spin.value()
-        name = f"{kind}({period})"
-        values = _INDICATORS[kind](
-            self.chart.df["close"].to_numpy(dtype=float), period
-        )
-        self.chart.add_overlay(name, values)
+        applied = self.applied_combo.currentData() or AppliedPrice.CLOSE
+        # Name stays short for the default (Close); qualifies otherwise.
+        suffix = "" if applied is AppliedPrice.CLOSE else f", {applied.short}"
+        name = f"{kind}({period}{suffix})"
+        series = indicators.price_series(self.chart.df, applied)
+        self.chart.add_overlay(name, _INDICATORS[kind](series, period))
         self.overlay_label.setText(", ".join(self.chart.overlay_names))
 
     def _clear_indicators(self) -> None:
