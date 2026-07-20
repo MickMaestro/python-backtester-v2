@@ -23,7 +23,13 @@ See [PLAN.md](PLAN.md) for the full development plan.
 - [x] **Phase 5 — Results & UX**: Results tab (stats summary, sortable trade
       list, double-click to jump to the chart), fast-run mode with progress
       bar, trades/summary export, persistent settings
-- [ ] Phase 6 — Tick-accurate fills, parameter optimization, packaging
+- [x] **Phase 6 — Precision, optimization & packaging**: intrabar SL/TP
+      resolution from finer-timeframe data, grid-search parameter optimizer
+      (multi-core) with a sortable results table, custom strategy loading
+      from a `strategies/` folder with hot reload, PyInstaller build
+
+Possible future work: multi-symbol portfolio backtests (needs a
+multi-instrument engine), walk-forward optimization, more indicators.
 
 ## Requirements
 
@@ -113,10 +119,51 @@ After any run (replay or fast), the Results tab holds:
 Your last-used dataset, strategy, parameter values, account settings, replay
 speed, and window size are remembered between sessions.
 
+## Optimizer tab
+
+Grid-search a strategy's parameters to find robust settings:
+
+- Check the parameters to sweep and give each a **From / To / Step**;
+  unchecked parameters stay at their default. The total combination count is
+  the product of the swept ranges (capped at 5,000).
+- Choose what to **rank by** — net profit, profit factor, expectancy, win
+  rate, Sharpe, or (ascending) max drawdown.
+- **Workers** fans the grid across CPU processes (0 = run in-process). A few
+  thousand combinations finish in seconds on a typical machine.
+- Results fill a sortable table (parameter columns + key stats); **double-
+  click a row to load those parameters into the Backtest tab** and replay or
+  fast-run them.
+
+Account settings (balance, spread, commission) are taken from the Backtest
+tab's last-used values.
+
+## Custom strategies
+
+Drop a `.py` file in the **`strategies/`** folder (next to the app, or next
+to the `.exe` in a packaged build) and every `Strategy` subclass in it appears
+in the Backtest and Optimizer tabs as `filename.ClassName`. Click **Reload
+strategies** to pick up edits without restarting (source is recompiled fresh,
+so same-size edits are never missed). The bundled
+[`strategies/trailing_trend.py`](strategies/trailing_trend.py) is an EMA trend
+rider with an ATR trailing stop — a good one to watch in the replay, where the
+stop line visibly trails price.
+
+Custom strategies also work from the CLI: `--strategy trailing_trend.TrailingTrend`.
+
+## Intrabar precision
+
+By default, when both SL and TP fall inside one bar the engine assumes the SL
+hit first (pessimistic — OHLC bars hide the intrabar path). If you also have a
+**finer-timeframe dataset of the same symbol** (e.g. M5 or M1 alongside H1),
+select it under **Intrabar** in the Backtest tab (or `--intrabar M5` on the
+CLI) and SL/TP and pending-order triggers are resolved sub-bar by sub-bar for
+a truthful answer to "which was hit first". Main bars not covered by the finer
+data fall back to single-bar resolution automatically.
+
 ## Run a backtest (CLI)
 
-The engine is GUI-independent; until the chart phases land, run it from the
-command line against any dataset in your library:
+The engine is GUI-independent; run it from the command line against any
+dataset in your library:
 
 ```powershell
 python run_backtest.py EURUSD H1
@@ -147,9 +194,11 @@ class MaCross(Strategy):
 ```
 
 Available: `buy/sell` (market, fills next bar open), `buy_limit/sell_limit/
-buy_stop/sell_stop`, `modify` (SL/TP, e.g. trailing stops), `close/close_all`,
-indicators via `self.ind` (`sma, ema, rsi, atr, highest, lowest`), and
-`cross_over/cross_under` helpers.
+buy_stop/sell_stop`, `modify(position, sl=…, tp=…)` (e.g. trailing stops),
+`close(position)` / `close_all()`, indicators via `self.ind` (`sma, ema, rsi,
+atr, highest, lowest`), and `cross_over/cross_under` helpers. Price series are
+`self.opens/highs/lows/closes` and `self.time` (plural, so they don't shadow
+the `self.close(position)` method); the current bar index is `self.i`.
 
 ### Execution model
 
@@ -160,8 +209,8 @@ indicators via `self.ind` (`sma, ema, rsi, atr, highest, lowest`), and
   bar's open. SL/TP and pending triggers are evaluated against each bar's
   high/low; a level gapped over at the open fills at the open.
 - If SL and TP both fall inside one bar, **SL is assumed to hit first**
-  (pessimistic — OHLC bars can't reveal the intrabar path). Phase 6 adds
-  tick/M1-based resolution.
+  (pessimistic — OHLC bars can't reveal the intrabar path). Supply finer-
+  timeframe data (see *Intrabar precision*) to resolve this from data.
 - Commission is charged per side per lot; swap accrues per night held.
 
 ## Tests
@@ -169,6 +218,20 @@ indicators via `self.ind` (`sma, ema, rsi, atr, highest, lowest`), and
 ```powershell
 pytest
 ```
+
+## Packaging a Windows app
+
+Build a standalone one-folder application (no Python install needed to run it):
+
+```powershell
+pip install pyinstaller
+pyinstaller packaging/backtester.spec --noconfirm
+```
+
+The result is `dist/PythonBacktester/`; run `PythonBacktester.exe`. A
+`strategies/` folder is bundled and also read from next to the executable at
+runtime, so end users can drop in their own strategy `.py` files without a
+rebuild. The `data_library/` is created next to the app on first use.
 
 ## Notes
 

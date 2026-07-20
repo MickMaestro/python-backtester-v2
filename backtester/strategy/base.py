@@ -45,16 +45,19 @@ class Strategy:
         self.df = df
         self.broker = broker
         self.ind = IndicatorFactory(df)
+        # Price series use plural names so they don't shadow the trading
+        # methods (``self.close`` is the close-a-position call, ``self.closes``
+        # is the close-price array).
         self.time = df["time"].to_numpy()
-        self.open = df["open"].to_numpy(dtype=float)
-        self.high = df["high"].to_numpy(dtype=float)
-        self.low = df["low"].to_numpy(dtype=float)
-        self.close = df["close"].to_numpy(dtype=float)
+        self.opens = df["open"].to_numpy(dtype=float)
+        self.highs = df["high"].to_numpy(dtype=float)
+        self.lows = df["low"].to_numpy(dtype=float)
+        self.closes = df["close"].to_numpy(dtype=float)
 
     def step(self, i: int) -> None:
         self.i = i
         self.on_bar(
-            BarEvent(i, self.time[i], self.open[i], self.high[i], self.low[i], self.close[i])
+            BarEvent(i, self.time[i], self.opens[i], self.highs[i], self.lows[i], self.closes[i])
         )
 
     # ------------------------------------------------------ user overrides

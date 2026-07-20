@@ -26,11 +26,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from backtester.data.models import Timeframe
 from backtester.data.store import DataStore, StoreError
 from backtester.engine.backtester import BacktestConfig, Backtester
 from backtester.engine.events import BarEvent, EquityEvent
 from backtester.engine.instrument import InstrumentSpec
-from backtester.strategy.examples import STRATEGIES
+from backtester.strategy import loader
 from backtester.ui.chart.chart_widget import BACKGROUND, ChartWidget
 from backtester.ui.chart.replay_controller import ReplayController
 from backtester.ui.chart.trade_markers import TradeLayer
@@ -75,6 +76,7 @@ class BacktestTab(QWidget):
         self._controller: ReplayController | None = None
         self._fast_worker: FastRunWorker | None = None
         self._param_widgets: dict[str, QWidget] = {}
+        self._strategies: dict[str, loader.StrategyEntry] = {}
         self._equity_x: list[int] = []
         self._equity_balance: list[float] = []
         self._equity_equity: list[float] = []
@@ -83,8 +85,27 @@ class BacktestTab(QWidget):
         layout = QHBoxLayout(self)
         layout.addWidget(self._build_setup_panel())
         layout.addLayout(self._build_replay_side(), stretch=1)
+        self.reload_strategies()
         self.refresh_datasets()
         self._restore_settings()
+
+    def reload_strategies(self) -> None:
+        """(Re)discover built-in and user strategies; hot-reloads .py edits."""
+        current = self.strategy_combo.currentText()
+        self._strategies, errors = loader.discover()
+        self.strategy_combo.blockSignals(True)
+        self.strategy_combo.clear()
+        self.strategy_combo.addItems(sorted(self._strategies))
+        if current in self._strategies:
+            self.strategy_combo.setCurrentText(current)
+        self.strategy_combo.blockSignals(False)
+        self._rebuild_param_form(self.strategy_combo.currentText())
+        if errors:
+            self.setup_note.setText("Strategy load errors:\n" + "\n".join(errors))
+
+    def _strategy_class(self) -> type | None:
+        entry = self._strategies.get(self.strategy_combo.currentText())
+        return entry[0] if entry else None
 
     # ------------------------------------------------------------ UI build
 
@@ -96,13 +117,22 @@ class BacktestTab(QWidget):
         self.dataset_combo = QComboBox()
         self.dataset_combo.currentTextChanged.connect(self._on_dataset_changed)
         self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(sorted(STRATEGIES))
         self.strategy_combo.currentTextChanged.connect(self._rebuild_param_form)
+        reload_button = QPushButton("Reload strategies")
+        reload_button.clicked.connect(self.reload_strategies)
+        self.intrabar_combo = QComboBox()
+        self.intrabar_combo.addItem("Off (main TF only)")
+        self.intrabar_combo.setToolTip(
+            "Resolve SL/TP inside each bar using a finer-timeframe dataset "
+            "of the same symbol (download one in the Data Manager)."
+        )
 
         data_group = QGroupBox("Setup")
         data_form = QFormLayout(data_group)
         data_form.addRow("Dataset:", self.dataset_combo)
         data_form.addRow("Strategy:", self.strategy_combo)
+        data_form.addRow(reload_button)
+        data_form.addRow("Intrabar:", self.intrabar_combo)
 
         self.params_group = QGroupBox("Strategy Parameters")
         self.params_form = QFormLayout(self.params_group)
@@ -247,6 +277,7 @@ class BacktestTab(QWidget):
         self._loaded_key = key
         self._stop_controller()
         self._clear_run_visuals()
+        self._refresh_intrabar_choices()
         self.chart.set_data(self._df, title=key.replace("_", " "))
         self.progress_label.setText(f"{len(self._df):,} bars loaded")
 
@@ -256,10 +287,11 @@ class BacktestTab(QWidget):
         while self.params_form.rowCount():
             self.params_form.removeRow(0)
         self._param_widgets.clear()
-        if strategy_name not in STRATEGIES:
+        entry = self._strategies.get(strategy_name)
+        if entry is None:
             return
         settings = app_settings()
-        for name, default in STRATEGIES[strategy_name].params.items():
+        for name, default in entry[0].params.items():
             stored = cast_like(
                 settings.value(f"params/{strategy_name}/{name}"), default
             )
@@ -298,9 +330,15 @@ class BacktestTab(QWidget):
         if self._df is None or len(self._df) == 0:
             QMessageBox.information(self, "Backtest", "Load a dataset first.")
             return None
-        strategy = STRATEGIES[self.strategy_combo.currentText()](
-            **self._collect_params()
-        )
+        strategy_cls = self._strategy_class()
+        if strategy_cls is None:
+            QMessageBox.information(self, "Backtest", "Pick a strategy first.")
+            return None
+        try:
+            strategy = strategy_cls(**self._collect_params())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Backtest", str(exc))
+            return None
         config = BacktestConfig(
             initial_balance=self.balance_spin.value(),
             spread_points=(
@@ -310,7 +348,40 @@ class BacktestTab(QWidget):
             instrument=self._instrument(),
         )
         self._save_settings()
-        return Backtester(self._df, strategy, config)
+        return Backtester(
+            self._df, strategy, config, intrabar_df=self._intrabar_df()
+        )
+
+    def _intrabar_df(self):
+        key = self.intrabar_combo.currentText()
+        if self.intrabar_combo.currentIndex() <= 0 or not key:
+            return None
+        symbol, _, timeframe = key.rpartition("_")
+        try:
+            return self.store.load_bars(symbol, timeframe)
+        except (StoreError, ValueError):
+            return None
+
+    def _refresh_intrabar_choices(self) -> None:
+        """Offer finer-timeframe datasets of the loaded symbol."""
+        current = self.intrabar_combo.currentText()
+        self.intrabar_combo.blockSignals(True)
+        self.intrabar_combo.clear()
+        self.intrabar_combo.addItem("Off (main TF only)")
+        if self._loaded_key:
+            symbol, _, timeframe = self._loaded_key.rpartition("_")
+            try:
+                main_seconds = Timeframe(timeframe).seconds
+            except ValueError:
+                main_seconds = 0
+            for info in self.store.datasets():
+                if info.symbol != symbol or info.key == self._loaded_key:
+                    continue
+                if Timeframe(info.timeframe).seconds < main_seconds:
+                    self.intrabar_combo.addItem(info.key)
+        if self.intrabar_combo.findText(current) >= 0:
+            self.intrabar_combo.setCurrentText(current)
+        self.intrabar_combo.blockSignals(False)
 
     def _run_title(self) -> str:
         return (
@@ -358,7 +429,11 @@ class BacktestTab(QWidget):
         for button in (self.start_button, self.fast_button, self.reset_button):
             button.setEnabled(False)
 
-        self._fast_worker = FastRunWorker(backtester, parent=self)
+        # No parent: the worker is owned solely via self._fast_worker and
+        # released with deleteLater(). Parenting it to the tab as well would
+        # let the tab's destructor delete it out from under a still-queued
+        # deleteLater event, crashing a later event loop.
+        self._fast_worker = FastRunWorker(backtester)
         self._fast_worker.progress.connect(
             lambda done, total: self.progress_bar.setValue(done)
         )
@@ -393,6 +468,8 @@ class BacktestTab(QWidget):
         for button in (self.start_button, self.fast_button, self.reset_button):
             button.setEnabled(True)
         if self._fast_worker is not None:
+            # Join before releasing (see OptimizerTab._finish_ui).
+            self._fast_worker.wait()
             self._fast_worker.deleteLater()
             self._fast_worker = None
 
@@ -459,6 +536,18 @@ class BacktestTab(QWidget):
             f"PF {stats['profit_factor']:.2f}, "
             f"max DD {stats['max_drawdown_pct']:.1f}%"
         )
+
+    def apply_external_params(self, strategy_name: str, params: dict) -> None:
+        """Adopt a strategy + parameter set (from the Optimizer tab)."""
+        if self.strategy_combo.findText(strategy_name) < 0:
+            return
+        self.strategy_combo.setCurrentText(strategy_name)
+        for name, value in params.items():
+            widget = self._param_widgets.get(name)
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.setValue(value)
 
     def focus_trade(self, trade) -> None:
         """Zoom the chart to a trade's entry→exit region (Results tab jump)."""

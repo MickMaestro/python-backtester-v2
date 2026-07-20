@@ -15,7 +15,9 @@ data_library/
 # Build artifacts
 build/
 dist/
+# Ignore generated PyInstaller specs, but keep our committed build spec.
 *.spec
+!packaging/backtester.spec
 
 # Local tooling
 .claude/

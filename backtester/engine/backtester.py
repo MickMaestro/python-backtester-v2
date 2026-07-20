@@ -48,7 +48,19 @@ class BacktestResult:
 
 
 class Backtester:
-    def __init__(self, df: pd.DataFrame, strategy, config: BacktestConfig | None = None):
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        strategy,
+        config: BacktestConfig | None = None,
+        intrabar_df: pd.DataFrame | None = None,
+    ):
+        """``intrabar_df``: optional finer-timeframe bars of the same symbol.
+        When given, SL/TP and pending-order triggers are resolved sub-bar by
+        sub-bar inside each main bar, so "which was hit first, SL or TP?" is
+        answered from data instead of the pessimistic assumption. Main bars
+        not covered by the finer data fall back to single-bar resolution.
+        """
         missing = [c for c in _REQUIRED if c not in df.columns]
         if missing:
             raise ValueError(f"Data is missing column(s): {', '.join(missing)}")
@@ -80,6 +92,36 @@ class Backtester:
         self.strategy = strategy
         strategy.bind(self.df, self.broker)
 
+        self._sub = None
+        if intrabar_df is not None and len(intrabar_df) > 0:
+            sub = intrabar_df.reset_index(drop=True)
+            # Map sub-bars to main bars by time: sub-bar j belongs to main bar
+            # i when time[i] <= t(j) < time[i] + bar_duration. Bounding by the
+            # bar's own duration keeps disjoint/far sub-data from spilling into
+            # the last main bar.
+            main_ns = self.time.astype("datetime64[ns]").astype("int64")
+            sub_ns = sub["time"].to_numpy().astype("datetime64[ns]").astype("int64")
+            if len(main_ns) > 1:
+                gaps = np.diff(main_ns)
+                dur = np.append(gaps, int(np.median(gaps)))
+            else:
+                dur = np.array([86_400_000_000_000], dtype="int64")  # 1 day
+            starts = np.searchsorted(sub_ns, main_ns, side="left")
+            ends = np.searchsorted(sub_ns, main_ns + dur, side="left")
+            self._sub = {
+                "open": sub["open"].to_numpy(dtype=float),
+                "high": sub["high"].to_numpy(dtype=float),
+                "low": sub["low"].to_numpy(dtype=float),
+                "close": sub["close"].to_numpy(dtype=float),
+                "spread": (
+                    sub["spread"].to_numpy(dtype=float)
+                    if "spread" in sub.columns and self.config.spread_points is None
+                    else None
+                ),
+                "starts": starts,
+                "ends": ends,
+            }
+
         self._equity_rows: list[tuple[Any, float, float]] = []
         self._finished = False
 
@@ -105,8 +147,7 @@ class Backtester:
             if i > 0:
                 broker.apply_swap(int(days[i] - days[i - 1]))
             broker.process_open(o, ask_off)
-            broker.process_pending(o, h, l, c, ask_off)
-            broker.process_sl_tp(o, h, l, c, ask_off)
+            self._resolve_intrabar(i, o, h, l, c, ask_off)
             yield from self._drain()
 
             self.strategy.step(i)
@@ -160,6 +201,27 @@ class Backtester:
         )
 
     # ------------------------------------------------------------ helpers
+
+    def _resolve_intrabar(
+        self, i: int, o: float, h: float, l: float, c: float, ask_off: float
+    ) -> None:
+        """Trigger pendings and SL/TP for bar ``i``, sub-bar by sub-bar when
+        finer data covers it, else against the single main bar."""
+        sub = self._sub
+        if sub is not None and sub["ends"][i] > sub["starts"][i]:
+            point = self.config.instrument.point
+            for j in range(sub["starts"][i], sub["ends"][i]):
+                if sub["spread"] is not None:
+                    off = sub["spread"][j] * point
+                else:
+                    off = ask_off
+                so, sh = sub["open"][j], sub["high"][j]
+                sl_, sc = sub["low"][j], sub["close"][j]
+                self.broker.process_pending(so, sh, sl_, sc, off)
+                self.broker.process_sl_tp(so, sh, sl_, sc, off)
+        else:
+            self.broker.process_pending(o, h, l, c, ask_off)
+            self.broker.process_sl_tp(o, h, l, c, ask_off)
 
     def _drain(self):
         events = self.broker.events[:]

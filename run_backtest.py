@@ -15,7 +15,7 @@ from backtester.data.store import DataStore, StoreError
 from backtester.engine.backtester import BacktestConfig, Backtester
 from backtester.engine.instrument import InstrumentSpec
 from backtester.engine.stats import format_stats
-from backtester.strategy.examples import STRATEGIES
+from backtester.strategy import loader
 
 
 def _resolve_instrument(store: DataStore, args) -> InstrumentSpec:
@@ -59,7 +59,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("symbol")
     parser.add_argument("timeframe", help="M1, M5, M15, M30, H1, H4, D1, W1, MN1")
     parser.add_argument(
-        "--strategy", default="ma_cross", choices=sorted(STRATEGIES),
+        "--strategy", default="ma_cross",
+        help="built-in name or <file>.<Class> from the strategies/ folder",
+    )
+    parser.add_argument(
+        "--intrabar", default=None, metavar="TF",
+        help="finer stored timeframe of the same symbol for intrabar SL/TP "
+             "resolution (e.g. M1)",
     )
     parser.add_argument(
         "--param", action="append", type=parse_param, default=[], metavar="KEY=VALUE",
@@ -91,15 +97,34 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Available datasets: {available}", file=sys.stderr)
         return 1
 
+    strategies, load_errors = loader.discover()
+    for error in load_errors:
+        print(f"warning: {error}", file=sys.stderr)
+    if args.strategy not in strategies:
+        print(
+            f"error: unknown strategy {args.strategy!r}. "
+            f"Available: {', '.join(sorted(strategies))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    intrabar_df = None
+    if args.intrabar:
+        try:
+            intrabar_df = store.load_bars(args.symbol, args.intrabar)
+        except (StoreError, ValueError) as exc:
+            print(f"error: intrabar data: {exc}", file=sys.stderr)
+            return 1
+
     instrument = _resolve_instrument(store, args)
-    strategy = STRATEGIES[args.strategy](**dict(args.param))
+    strategy = strategies[args.strategy][0](**dict(args.param))
     config = BacktestConfig(
         initial_balance=args.balance,
         spread_points=args.spread,
         commission_per_lot=args.commission,
         instrument=instrument,
     )
-    result = Backtester(df, strategy, config).run_all()
+    result = Backtester(df, strategy, config, intrabar_df=intrabar_df).run_all()
 
     print(f"\n{args.strategy} on {args.symbol} {args.timeframe} "
           f"({len(df):,} bars, {df['time'].iloc[0]} .. {df['time'].iloc[-1]})")
