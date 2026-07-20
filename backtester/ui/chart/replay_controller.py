@@ -59,6 +59,11 @@ class ReplayController(QObject):
         """Advance exactly one bar (usable while paused)."""
         self._advance(1)
 
+    def advance(self, bars: int) -> None:
+        """Advance ``bars`` bars immediately, in one batch (e.g. replay warm-up)."""
+        if bars > 0:
+            self._advance(bars)
+
     def fast_forward(self) -> None:
         """Finish the rest of the run without animation."""
         self.pause()

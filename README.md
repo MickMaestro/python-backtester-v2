@@ -28,6 +28,13 @@ See [PLAN.md](PLAN.md) for the full development plan.
       (multi-core) with a sortable results table, custom strategy loading
       from a `strategies/` folder with hot reload, PyInstaller build
 
+**v2 in progress:**
+
+- [x] Applied price for indicators (Close/Open/High/Low/Median/Typical/Weighted)
+- [x] Manual trading mode — trade the replay by hand with draggable
+      entry/TP/SL lines, risk-based sizing, and a speed slider
+- [ ] Optional entry/exit trade screenshots
+
 Possible future work: multi-symbol portfolio backtests (needs a
 multi-instrument engine), walk-forward optimization, more indicators.
 
@@ -105,6 +112,42 @@ a background thread with a progress bar, then draws the final chart (all
 candles, every trade marker, full equity curve) and opens the Results tab.
 Hit *Start Replay* afterwards to watch the same run animated — runs are
 deterministic.
+
+## Manual tab (trade the replay by hand)
+
+Instead of a strategy, trade the chart yourself as it replays — useful for
+practising a discretionary approach or sanity-checking a market.
+
+Pick a dataset, set balance/spread/commission, and hit **Start session**. The
+replay warms up ~100 bars so you have context, then hands over **paused**:
+
+- **Three draggable lines** set the trade: **Entry** (pending orders only),
+  **Take profit**, and **Stop loss**. TP and SL each have a checkbox — a trade
+  needs neither.
+- **Order type** is explicit: *Market* fills at the next bar's open, *Pending*
+  places a stop/limit at the entry line (the kind is derived from which side of
+  price the line sits).
+- **Position size** three ways: a **% of balance** to risk, a **fixed cash**
+  risk, or a **fixed lot size**. The risk modes size the trade from the stop
+  distance (`lots = risk ÷ (stop distance × contract size)`) and therefore need
+  an SL; without one, use fixed lots. A live preview spells out exactly what
+  will be placed — order type, price, lots, and cash at risk — before you click.
+- **Manage the trade**: drag the SL/TP lines to move them on the live position
+  (the same call a strategy's trailing stop makes), **Close position** to exit
+  at the next open, or **Cancel pending**.
+- **Playback**: Play/Pause, **Next candle** to step one bar at a time, and a
+  **speed slider** (1–100 bars/s). *Follow* keeps the chart scrolling with price.
+
+Orders go through the same simulated broker as automated strategies, so fills,
+SL/TP, spread, commission, swap, and the equity curve behave identically. When
+the replay reaches the end of the data, the session's trades and statistics
+open in the Results tab.
+
+> Sizing depends on the instrument's contract spec. If a dataset was downloaded
+> before spec capture existed, the tab says so and falls back to forex maths —
+> re-download it (any small range; it merges). If the smallest tradeable lot
+> would risk more than you asked for, the preview flags it rather than quietly
+> sizing you up.
 
 ## Results tab
 

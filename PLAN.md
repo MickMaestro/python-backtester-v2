@@ -212,10 +212,21 @@ series, not just a raw column.
 
 ### 7b. Manual trading mode
 
-A **mode toggle** in the Backtest tab: *Automatic (strategy)* (today's behaviour) vs
-*Manual*. In Manual mode the engine runs a `ManualStrategy` whose `on_bar` does nothing;
-the GUI injects the user's orders straight into the simulated broker, so fills, SL/TP,
-spread, commission, swap, equity, stats, and screenshots all reuse the existing engine.
+A dedicated **Manual tab** running a `ManualStrategy` whose `on_bar` does nothing; the GUI
+injects the user's orders straight into the simulated broker, so fills, SL/TP, spread,
+commission, swap, equity, stats, and results all reuse the existing engine.
+
+> *Rectified from the original sketch (a mode toggle inside the Backtest tab).* A separate
+> tab keeps the tested automatic backtest untouched and each screen focused; it composes the
+> existing `ChartWidget`, `TradeLayer`, `ReplayController`, and equity plot rather than
+> duplicating engine logic. The only cost is a similar-looking playback toolbar, which
+> differs anyway (speed **slider** + order entry vs the automatic tab's speed combo).
+
+**Session lifecycle.** *Start* builds `Backtester(df, ManualStrategy(), config)` and a
+`ReplayController`, advances a **warm-up** of ~100 bars so there is price history for
+context, then **pauses** — the user trades forward from there. Reaching the end of data
+force-closes open positions (as usual) and emits the run to the Results tab. *Restart*
+rebuilds a fresh session.
 
 **How orders reach the engine.** The replay already steps the engine generator bar-by-bar
 on the main thread via `ReplayController`. `ManualStrategy` (or `Backtester`) exposes its
@@ -231,9 +242,18 @@ manual order placed on bar *i* fills on bar *i+1* — the same realistic timing 
   TP/SL calls `broker.modify_position` (visually identical to a strategy trailing a stop).
 
 **Order-entry panel** (`manual_panel.py`):
-- **Direction**: *Buy* / *Sell* — market at next open, or a pending order when the entry
-  line sits away from price (buy-stop above / buy-limit below, and mirror for sell),
-  inferred from side and the entry line's position.
+- **Order type**: an explicit *Market* / *Pending* selector, plus **Buy** / **Sell**
+  buttons. *Rectified:* the original sketch inferred market-vs-pending from how close the
+  entry line sat to price, which needs an arbitrary tolerance and can surprise the user.
+  An explicit selector is unambiguous and testable:
+  - *Market* — fills at the next bar's open; the entry line is hidden (there is no trigger
+    price to choose). Risk sizing uses the **current close as the entry estimate**, since
+    the true fill (next open) isn't known yet — a small, normal discrepancy.
+  - *Pending* — the entry line is shown and its price is the trigger; the limit/stop kind
+    is derived from side vs current price (buy above → buy-stop, buy below → buy-limit;
+    sell above → sell-limit, sell below → sell-stop).
+  - A live **preview label** always states the resolved order ("Buy Stop @ 25100 · 0.42
+    lots · risking 250.00"), so what will happen is visible before clicking.
 - **Risk sizing** (radio, one active):
   1. **% of balance to risk** — `risk_cash = pct/100 · balance`
   2. **Fixed cash risk** — `risk_cash = amount`
