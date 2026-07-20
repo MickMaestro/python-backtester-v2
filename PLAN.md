@@ -5,6 +5,10 @@ data from MT5, run backtests with a Python strategy API, and watch a **visual re
 the backtest — candles drawing in sequence with trades opening, adjusting, and closing on
 the chart.
 
+> **Status:** Phases 1–6 are complete (this is the **v2** repository — the starting point
+> carries the full v1 codebase forward). Phase 7 below is the next block of work: it is
+> planned, not yet implemented. Work continues one phase at a time, pushed for review.
+
 ---
 
 ## 1. Technology choices
@@ -87,6 +91,23 @@ Python Backtester/
 └── tests/                     # engine unit tests (fills, SL/TP, PnL, stats)
 ```
 
+**New modules added in Phase 7 (v2):**
+
+```
+backtester/
+├── strategy/
+│   └── manual.py             # ManualStrategy: no-op on_bar, exposes broker to the GUI
+└── ui/
+    ├── manual_panel.py       # manual order-entry panel (direction, risk sizing, manage)
+    ├── screenshots.py        # ScreenshotCapturer: entry/exit PNG pairs + manifest
+    └── chart/
+        └── order_lines.py    # three draggable lines (entry / TP / SL) + risk→lots math
+```
+Plus edits to `strategy/indicators.py` (applied-price selection), `ui/chart/chart_widget.py`
+(draggable order lines, fixed-size export grab), `ui/chart_tab.py` + `ui/backtest_tab.py`
+(applied-price picker, manual mode, speed slider, screenshot checkbox), and
+`ui/chart/replay_controller.py` (continuous speed from a slider).
+
 **Key design decision — engine/GUI separation:** the engine is a pure-Python generator
 that yields events (`new bar`, `order opened`, `SL modified`, `position closed`, `equity
 point`). Fast mode drains it in a worker thread; replay mode drains it on a `QTimer` at
@@ -144,9 +165,121 @@ optimizer).
 - Results panel (trade list ↔ chart jump, full stats), fast-run mode with progress bar
   then optional "replay this result", report export, settings persistence (QSettings).
 
-**Phase 6 — Stretch**
+**Phase 6 — Stretch** ✅ *(done — minus multi-symbol portfolio, deferred)*
 - Tick/M1 intrabar accuracy mode, parameter optimization (grid search, multiprocessing)
-  with results table, multi-symbol portfolio tests, strategy hot-reload, PyInstaller build.
+  with results table, strategy hot-reload, PyInstaller build.
+
+**Phase 7 — v2 features** *(planned — the next block of work; see §7 for full design)*
+- **7a. Applied price for indicators** — every indicator (SMA, EMA, RSI, highest/lowest,
+  and where meaningful, others) can be computed on a chosen applied price: Close, Open,
+  High, Low, Median (HL/2), Typical (HLC/3), Weighted (HLCC/4). Selectable in the Chart
+  tab's indicator controls and as an argument in the strategy API.
+- **7b. Manual trading mode** — a play-and-trade mode: the replay runs while the user
+  places and manages trades by hand using three draggable chart lines (entry, take-profit,
+  stop-loss; TP/SL optional). Position size chosen as a % of balance to risk, a fixed cash
+  risk, or a fixed lot size. Playback has a pause button, a speed **slider**, and a
+  skip-to-next-candle button. Manual trades run through the same broker/engine, so stats,
+  equity, and results work identically.
+- **7c. Trade screenshots** — a checkbox in the (automatic) backtest setup that, when
+  ticked, saves a chart screenshot at every trade's entry and exit, named as pairs
+  (`0001_entry.png` / `0001_exit.png`) in a per-run folder with a manifest.
+- *Milestone: manually trade EURUSD candle by candle with risk-based sizing; run an
+  MA-cross backtest with an EMA on Typical price and a folder of entry/exit screenshots.*
+
+## 7. Phase 7 design (v2 features)
+
+### 7a. Applied price for indicators
+
+Today `IndicatorFactory` methods take a `source` column name (`"close"`, `"high"`, …).
+Generalize this to MT5's standard **applied prices** so an SMA/EMA/RSI can run on a derived
+series, not just a raw column.
+
+- New `AppliedPrice` enum in `indicators.py`:
+  `CLOSE, OPEN, HIGH, LOW, MEDIAN, TYPICAL, WEIGHTED`.
+- New helper `price_series(df, applied) -> np.ndarray`:
+  - Median = (High + Low) / 2
+  - Typical = (High + Low + Close) / 3
+  - Weighted = (High + Low + 2·Close) / 4
+  - the rest are the raw columns.
+- Indicator methods gain an `applied: AppliedPrice = AppliedPrice.CLOSE` argument
+  (`source` kept as an alias for a raw column name for back-compat). ATR is intrinsically
+  H/L/C-based, so it ignores applied price (documented); `highest`/`lowest` still accept a
+  source but also accept an applied price.
+- **Chart tab**: add an *Apply to* dropdown next to the indicator/period controls; the
+  overlay label becomes e.g. `EMA(20, Typical)`.
+- **Strategy API**: `self.ind.ema(20, applied=AppliedPrice.MEDIAN)`. Document in README.
+- **Tests**: median/typical/weighted values on a hand-built frame; overlay label text.
+
+### 7b. Manual trading mode
+
+A **mode toggle** in the Backtest tab: *Automatic (strategy)* (today's behaviour) vs
+*Manual*. In Manual mode the engine runs a `ManualStrategy` whose `on_bar` does nothing;
+the GUI injects the user's orders straight into the simulated broker, so fills, SL/TP,
+spread, commission, swap, equity, stats, and screenshots all reuse the existing engine.
+
+**How orders reach the engine.** The replay already steps the engine generator bar-by-bar
+on the main thread via `ReplayController`. `ManualStrategy` (or `Backtester`) exposes its
+`SimBroker`; the manual panel calls `broker.market_order / limit_order / stop_order /
+modify_position / close_position` while paused or between steps. Because the broker fills
+market orders at the **next bar's open** and evaluates SL/TP against subsequent bars, a
+manual order placed on bar *i* fills on bar *i+1* — the same realistic timing as strategies.
+
+**Three draggable chart lines** (`order_lines.py`, draggable pyqtgraph `InfiniteLine`s):
+- **Entry** (blue), **Take-Profit** (green), **Stop-Loss** (red). TP/SL are individually
+  toggleable — a trade needs neither.
+- Dragging a line updates the order-entry preview live; once a position is open, dragging
+  TP/SL calls `broker.modify_position` (visually identical to a strategy trailing a stop).
+
+**Order-entry panel** (`manual_panel.py`):
+- **Direction**: *Buy* / *Sell* — market at next open, or a pending order when the entry
+  line sits away from price (buy-stop above / buy-limit below, and mirror for sell),
+  inferred from side and the entry line's position.
+- **Risk sizing** (radio, one active):
+  1. **% of balance to risk** — `risk_cash = pct/100 · balance`
+  2. **Fixed cash risk** — `risk_cash = amount`
+  3. **Fixed lot size** — lots entered directly
+  For (1)/(2): `lots = risk_cash / (|entry − SL| · contract_size)`, rounded to the lot step
+  (0.01). Risk sizing **requires an SL** (no SL ⇒ no risk distance); if SL is off, those
+  modes are disabled with a hint, or the user switches to fixed lots. A live preview shows
+  the computed lots and the cash-at-risk before placing.
+- **Manage**: *Close* (market at next open), *Cancel pending*, and drag-to-modify SL/TP.
+- An open-position badge (direction, lots, entry, floating P/L) — reuse the replay badge.
+
+**Playback controls** (shared, surfaced prominently in Manual mode):
+- **Pause/Play** button (exists).
+- **Speed slider** — replaces the discrete speed combo with a continuous slider
+  (e.g. 1–200 bars/sec, log-ish scale); `ReplayController.set_speed` already takes a float.
+- **Skip-to-next-candle** button — one-bar `Step` (exists), so the user can advance
+  deliberately and place orders candle by candle.
+
+**Tests**: risk→lots math (with/without SL, lot-step rounding); a market order placed via
+the panel fills at the next bar and appears in results; drag-modify updates the position's
+SL. GUI wiring smoke-tested offscreen.
+
+**Open question**: whether Manual mode also allows *scaling in/out* (multiple positions) —
+the broker already supports multiple open positions, so start with one-at-a-time for a
+clean UX and revisit.
+
+### 7c. Trade screenshots
+
+A **checkbox** in the automatic backtest setup — *Capture trade screenshots* — saves a
+chart image at each trade's entry and exit.
+
+- **Naming**: `NNNN_entry.png` / `NNNN_exit.png` (zero-padded trade id) so the two frames
+  are an obvious pair. A `manifest.csv` maps id → files, direction, lots, entry/exit
+  time & price, and net.
+- **Folder**: `screenshots/<symbol>_<tf>_<strategy>_<YYYYMMDD-HHMMSS>/` next to the app
+  (base dir configurable), one folder per run.
+- **Capture path** (`screenshots.py`, `ScreenshotCapturer`): render deterministically with
+  a **post-run pass** so it works for both fast and replay runs and gives consistent
+  framing — for each trade, reveal candles up to the entry bar, centre the entry region,
+  grab the chart to a fixed-size `QPixmap` (e.g. 1280×720) → entry PNG; reveal to the exit
+  bar, centre the exit region, grab → exit PNG. (Live grab-on-event during replay is a
+  possible fast path but framing is inconsistent, so the render pass is the default.)
+- Runs on a copy/offscreen chart so it doesn't disturb the user's current view; guard for
+  large trade counts (warn/limit, e.g. skip past N trades or make it opt-in per range).
+- **Tests**: capturing a small run writes the right number of paired files + a manifest row
+  per trade; filenames pair correctly.
 
 ## 6. Risks / open questions
 
@@ -161,3 +294,12 @@ optimizer).
   per frame) instead of one repaint per bar.
 - **Look-ahead bias** — indicators are precomputed vectorized, but the strategy may only
   read values up to the current bar index; enforce in the API.
+- **Manual risk sizing without an SL** — % / cash risk modes need a stop distance; with no
+  SL there is nothing to size against. Disable those modes (or require an SL) rather than
+  guess, and always show the computed lots before the order is placed.
+- **Screenshot volume & performance** — a run with thousands of trades would write
+  thousands of PNGs and take a while to render. Make capture opt-in, warn past a threshold,
+  render off the user's live chart, and consider a bar-range limit.
+- **Offscreen chart grab sizing** — grabbing a widget with no valid size yields a blank
+  image; render screenshots at a fixed export resolution on a sized (possibly hidden)
+  chart so output is consistent regardless of window state.
