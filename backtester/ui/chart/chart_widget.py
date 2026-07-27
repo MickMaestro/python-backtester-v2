@@ -18,6 +18,11 @@ BACKGROUND = "#131722"
 CROSSHAIR_PEN = pg.mkPen("#787b86", width=1, style=Qt.PenStyle.DashLine)
 OVERLAY_COLORS = ["#f0a732", "#42a5f5", "#ab47bc", "#26c6da", "#ec407a", "#d4e157"]
 INITIAL_BARS = 300
+#: Small gap kept to the right of the newest candle when following (bars).
+RIGHT_PAD_BARS = 2.0
+#: Blank space to the right of the newest candle when "chart shift" is on,
+#: as a fraction of the visible width (MT5-style shift).
+SHIFT_FRACTION = 0.2
 
 
 class ChartWidget(QWidget):
@@ -31,6 +36,7 @@ class ChartWidget(QWidget):
         self._overlays: dict[str, pg.PlotDataItem] = {}
         self._color_cycle = 0
         self._follow = True
+        self._shift = False
 
         self.info_label = QLabel(" ")
         self.info_label.setStyleSheet(
@@ -82,8 +88,10 @@ class ChartWidget(QWidget):
         )
         self.time_axis.set_times(df["time"].to_numpy())
 
+        # Allow room past the last bar so "chart shift" can hold blank space
+        # on the right without the range limit fighting it.
         self._view_box.setLimits(
-            xMin=-10, xMax=n + 10, minXRange=8, maxXRange=max(n * 1.1, 20)
+            xMin=-10, xMax=n + INITIAL_BARS, minXRange=8, maxXRange=max(n * 1.1, 20)
         )
         start = max(0, n - INITIAL_BARS)
         self.plot.setXRange(start, n, padding=0.02)
@@ -100,16 +108,13 @@ class ChartWidget(QWidget):
     # -------------------------------------------------------------- replay
 
     def reveal_to(self, k: int) -> None:
-        """Show only the first ``k`` bars; scroll to keep the newest visible."""
+        """Show only the first ``k`` bars; when following, scroll the window
+        (keeping its width) so the newest candle stays in view."""
         self.candles.set_visible_length(k)
         if k <= 0:
             return
         if self._follow:
-            (x0, x1), _ = self._view_box.viewRange()
-            width = max(x1 - x0, 10.0)
-            # Scroll only once the newest bar approaches the right edge.
-            if k - 1 > x1 - 2:
-                self.plot.setXRange(k - width, k + width * 0.02, padding=0)
+            self._follow_scroll(k)
         self._update_info(k - 1)
 
     def reveal_all(self) -> None:
@@ -120,13 +125,36 @@ class ChartWidget(QWidget):
         if on:
             k = self.candles.visible_length
             if k > 0:
-                (x0, x1), _ = self._view_box.viewRange()
-                width = max(x1 - x0, 10.0)
-                self.plot.setXRange(k - width, k + width * 0.02, padding=0)
+                self._follow_scroll(k, force=True)
+
+    def set_shift(self, on: bool) -> None:
+        """Toggle blank space to the right of the newest candle (MT5 shift)."""
+        self._shift = on
+        if self._follow:
+            k = self.candles.visible_length
+            if k > 0:
+                self._follow_scroll(k, force=True)
 
     @property
     def follow(self) -> bool:
         return self._follow
+
+    @property
+    def shift(self) -> bool:
+        return self._shift
+
+    def _follow_scroll(self, k: int, force: bool = False) -> None:
+        """Slide the view so the newest bar sits at its anchor, **preserving
+        the current width** (no squeezing)."""
+        (x0, x1), _ = self._view_box.viewRange()
+        width = max(x1 - x0, 10.0)
+        newest = k - 1
+        blank_right = width * SHIFT_FRACTION if self._shift else RIGHT_PAD_BARS
+        right = newest + blank_right
+        # Until the newest bar reaches the anchor, let candles fill from the
+        # left (no empty gap); once it does, keep it pinned there.
+        if force or right > x1:
+            self.plot.setXRange(right - width, right, padding=0)
 
     def _on_manual_range(self, *_args) -> None:
         if self._follow:

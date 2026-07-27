@@ -44,6 +44,59 @@ def test_set_data_shows_recent_window(qapp):
     assert x1 - x0 < 400        # ~INITIAL_BARS window, not the whole series
 
 
+def test_follow_scrolls_at_constant_width(qapp):
+    """Following must slide a fixed window, not grow it (no candle squeeze)."""
+    chart = ChartWidget()
+    chart.set_data(make_df(2000), "T")
+    chart.reveal_to(0)
+    chart.plot.setXRange(0, 300, padding=0)
+    chart.set_follow(True)
+
+    widths = []
+    for k in range(300, 900):
+        chart.reveal_to(k)
+        (x0, x1), _ = chart._view_box.viewRange()
+        widths.append(x1 - x0)
+
+    assert max(widths) - min(widths) < 3        # width stays put (was compounding)
+    (x0, x1), _ = chart._view_box.viewRange()
+    assert x0 < 899 <= x1 + 3                    # newest bar still in view, near right
+
+
+def test_chart_shift_leaves_space_on_the_right(qapp):
+    chart = ChartWidget()
+    chart.set_data(make_df(2000), "T")
+    chart.reveal_to(0)
+    chart.plot.setXRange(0, 300, padding=0)
+    chart.set_follow(True)
+    chart.reveal_to(700)                         # well past the edge → scrolling
+
+    newest = 699
+    (_x0, x1), _ = chart._view_box.viewRange()
+    gap_off = x1 - newest
+    assert 0 <= gap_off < 6                       # newest nearly at the right edge
+
+    chart.set_shift(True)
+    (x0, x1), _ = chart._view_box.viewRange()
+    gap_on = x1 - newest
+    assert gap_on > gap_off                       # more blank space now
+    assert gap_on > 0.1 * (x1 - x0)               # a meaningful shift
+    assert x0 <= newest <= x1                      # newest still visible
+
+
+def test_follow_turns_off_shift_returns_to_edge(qapp):
+    chart = ChartWidget()
+    chart.set_data(make_df(2000), "T")
+    chart.reveal_to(0)
+    chart.plot.setXRange(0, 300, padding=0)
+    chart.set_follow(True)
+    chart.reveal_to(700)
+    chart.set_shift(True)
+    chart.set_shift(False)
+    (_x0, x1), _ = chart._view_box.viewRange()
+    assert x1 - 699 < 6                            # back to a small right gap
+
+
 def test_databounds_fit_visible_window(qapp):
     df = make_df(300)
     item = CandlestickItem()

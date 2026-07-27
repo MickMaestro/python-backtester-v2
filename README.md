@@ -97,9 +97,11 @@ commission, and hit **Start Replay**:
 - A status row tracks balance, equity, floating PnL, and open/closed trade
   counts; an equity + balance sub-chart below the candles stays synced to
   the replay clock.
-- **Follow** keeps the chart scrolling with the newest bar; pan or zoom to
-  detach and inspect, tick Follow to snap back. The crosshair readout only
-  shows bars revealed so far — no peeking ahead.
+- **Follow** scrolls the chart with the newest candle at a fixed zoom (it
+  slides the window rather than compressing the candles, like MT5); pan or
+  zoom to detach and inspect, tick Follow to snap back. **Shift** leaves blank
+  space to the right of the newest candle. The crosshair readout only shows
+  bars revealed so far — no peeking ahead.
 - When the run finishes, the toolbar shows the summary (trades, net,
   profit factor, max drawdown). Full results panel lands in Phase 5.
 

@@ -253,6 +253,9 @@ class BacktestTab(QWidget):
         self.follow_check = QCheckBox("Follow")
         self.follow_check.setChecked(True)
         self.follow_check.toggled.connect(self._on_follow_toggled)
+        self.shift_check = QCheckBox("Shift")
+        self.shift_check.setToolTip("Leave blank space to the right of the newest candle.")
+        self.shift_check.toggled.connect(self._on_shift_toggled)
         self.progress_label = QLabel("no run")
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(160)
@@ -268,6 +271,7 @@ class BacktestTab(QWidget):
         toolbar.addWidget(self.speed_slider)
         toolbar.addWidget(self.speed_label)
         toolbar.addWidget(self.follow_check)
+        toolbar.addWidget(self.shift_check)
         toolbar.addSpacing(16)
         toolbar.addWidget(self.progress_label)
         toolbar.addWidget(self.progress_bar)
@@ -464,6 +468,7 @@ class BacktestTab(QWidget):
         self.chart.reveal_to(0)
         self.chart.plot.setXRange(0, min(INITIAL_WINDOW, len(self._df)), padding=0.02)
         self.chart.set_follow(self.follow_check.isChecked())
+        self.chart.set_shift(self.shift_check.isChecked())
 
         self._controller = ReplayController(backtester, parent=self)
         self._controller.events_batch.connect(self._on_events)
@@ -663,6 +668,9 @@ class BacktestTab(QWidget):
     def _on_follow_toggled(self, checked: bool) -> None:
         self.chart.set_follow(checked)
 
+    def _on_shift_toggled(self, checked: bool) -> None:
+        self.chart.set_shift(checked)
+
     def _reset(self) -> None:
         self._stop_controller()
         self.manual.detach()
@@ -685,6 +693,7 @@ class BacktestTab(QWidget):
         settings.setValue("backtest/commission", self.commission_spin.value())
         settings.setValue("backtest/speed", self.speed_slider.value())
         settings.setValue("backtest/mode", self.mode_combo.currentText())
+        settings.setValue("backtest/shift", self.shift_check.isChecked())
         strategy = self.strategy_combo.currentText()
         for name, value in self._collect_params().items():
             settings.setValue(f"params/{strategy}/{name}", value)
@@ -714,6 +723,7 @@ class BacktestTab(QWidget):
         mode = str(settings.value("backtest/mode", "") or "")
         if mode and self.mode_combo.findText(mode) >= 0:
             self.mode_combo.setCurrentText(mode)
+        self.shift_check.setChecked(cast_like(settings.value("backtest/shift"), False))
 
     # ----------------------------------------------------------- lifecycle
 
