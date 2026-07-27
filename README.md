@@ -5,39 +5,6 @@ historical data from your MT5 terminal, run backtests with a Python strategy
 API, and watch a **visual replay** — candles drawing in sequence with trades
 opening, adjusting, and closing on the chart.
 
-See [PLAN.md](PLAN.md) for the full development plan.
-
-## Roadmap
-
-- [x] **Phase 1 — Data layer**: MT5 connection, bar download, local Parquet
-      library with CSV import/export, Data Manager GUI
-- [x] **Phase 2 — Backtest engine (headless)**: simulated broker (market /
-      limit / stop orders, SL/TP, spread, commission, swap), strategy API
-      with indicators, performance stats, CLI runner
-- [x] **Phase 3 — Candlestick chart (pyqtgraph)**: viewport-windowed candle
-      rendering (100k+ bars stay fluid), pan/zoom, crosshair with OHLC
-      readout, indicator overlays, Chart tab in the GUI
-- [x] **Phase 4 — Visual replay**: Backtest tab with play/pause/step/speed/
-      fast-forward, candles drawing in sequence, live trade arrows and
-      win/loss connectors, moving SL/TP lines, synced equity sub-chart
-- [x] **Phase 5 — Results & UX**: Results tab (stats summary, sortable trade
-      list, double-click to jump to the chart), fast-run mode with progress
-      bar, trades/summary export, persistent settings
-- [x] **Phase 6 — Precision, optimization & packaging**: intrabar SL/TP
-      resolution from finer-timeframe data, grid-search parameter optimizer
-      (multi-core) with a sortable results table, custom strategy loading
-      from a `strategies/` folder with hot reload, PyInstaller build
-
-**v2 in progress:**
-
-- [x] Applied price for indicators (Close/Open/High/Low/Median/Typical/Weighted)
-- [x] Manual trading mode — a Backtest-tab mode where you trade the replay by
-      hand with draggable entry/TP/SL lines, risk-based sizing, and a speed slider
-- [ ] Optional entry/exit trade screenshots
-
-Possible future work: multi-symbol portfolio backtests (needs a
-multi-instrument engine), walk-forward optimization, more indicators.
-
 ## Requirements
 
 - Windows with [MetaTrader 5](https://www.metatrader5.com/) installed and
@@ -108,7 +75,7 @@ commission, and hit **Start Replay**:
   space to the right of the newest candle. The crosshair readout only shows
   bars revealed so far — no peeking ahead.
 - When the run finishes, the toolbar shows the summary (trades, net,
-  profit factor, max drawdown). Full results panel lands in Phase 5.
+  profit factor, max drawdown), and the full breakdown opens in the Results tab.
 
 If a dataset was downloaded before contract-spec capture was added, the
 Backtest tab warns and assumes forex contract math — re-download the
