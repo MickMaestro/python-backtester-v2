@@ -8,19 +8,41 @@ fast as possible and returns a ``BacktestResult``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterator
 
 import numpy as np
 import pandas as pd
 
 from .broker import SimBroker
-from .events import BarEvent, EquityEvent
+from .events import (
+    BarEvent,
+    EquityEvent,
+    PositionClosed,
+    PositionModified,
+    PositionOpened,
+)
 from .instrument import InstrumentSpec
 from .orders import CloseReason
 from .stats import compute_stats
 
 _REQUIRED = ("time", "open", "high", "low", "close")
+
+#: Event types kept when ``record_events`` is on (see ``_snapshot``).
+_RECORDED = (PositionOpened, PositionModified, PositionClosed)
+
+
+def _snapshot(event):
+    """Freeze a position event so it stays true after the run.
+
+    ``Position`` is mutable and keeps changing — a stored reference would
+    report its *final* SL/TP, not the values at the moment of the event, which
+    would silently misrepresent every trailing stop. ``Trade`` is built at
+    close time and never mutated, so it is kept as-is.
+    """
+    if isinstance(event, (PositionOpened, PositionModified)):
+        return replace(event, position=replace(event.position))
+    return event
 
 
 @dataclass
@@ -41,6 +63,9 @@ class BacktestResult:
     equity: pd.DataFrame                # columns: time, balance, equity
     stats: dict
     config: "BacktestConfig | None" = None  # run settings (instrument, costs)
+    #: Position opened/modified/closed events, in order — only populated when
+    #: the run was created with ``record_events=True`` (see engine/trade_log.py).
+    events: list = field(default_factory=list)
 
     @property
     def net_profit(self) -> float:
@@ -54,12 +79,19 @@ class Backtester:
         strategy,
         config: BacktestConfig | None = None,
         intrabar_df: pd.DataFrame | None = None,
+        record_events: bool = False,
     ):
         """``intrabar_df``: optional finer-timeframe bars of the same symbol.
         When given, SL/TP and pending-order triggers are resolved sub-bar by
         sub-bar inside each main bar, so "which was hit first, SL or TP?" is
         answered from data instead of the pessimistic assumption. Main bars
         not covered by the finer data fall back to single-bar resolution.
+
+        ``record_events``: keep every position opened/modified/closed event on
+        the result (``BacktestResult.events``) so a post-run pass can walk them
+        — used by trade context logs (``engine/trade_log.py``). Off by default:
+        a trailing-stop strategy emits one modification per bar, which is memory
+        nobody running an optimizer sweep should pay for.
         """
         missing = [c for c in _REQUIRED if c not in df.columns]
         if missing:
@@ -122,6 +154,8 @@ class Backtester:
                 "ends": ends,
             }
 
+        self.record_events = record_events
+        self._recorded: list = []
         self._equity_rows: list[tuple[Any, float, float]] = []
         self._finished = False
 
@@ -198,6 +232,7 @@ class Backtester:
                 self.broker.trades, equity, self.config.initial_balance
             ),
             config=self.config,
+            events=list(self._recorded),
         )
 
     # ------------------------------------------------------------ helpers
@@ -226,4 +261,8 @@ class Backtester:
     def _drain(self):
         events = self.broker.events[:]
         self.broker.events.clear()
+        if self.record_events:
+            self._recorded.extend(
+                _snapshot(e) for e in events if isinstance(e, _RECORDED)
+            )
         return events

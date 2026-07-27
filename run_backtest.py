@@ -11,10 +11,18 @@ from __future__ import annotations
 import argparse
 import sys
 
+from pathlib import Path
+
 from backtester.data.store import DataStore, StoreError
 from backtester.engine.backtester import BacktestConfig, Backtester
 from backtester.engine.instrument import InstrumentSpec
 from backtester.engine.stats import format_stats
+from backtester.engine.trade_log import (
+    ContextMode,
+    TradeLogSpec,
+    log_run,
+    run_folder_name,
+)
 from backtester.strategy import loader
 
 
@@ -81,6 +89,21 @@ def main(argv: list[str] | None = None) -> int:
         "--trades", type=int, default=0, metavar="N", help="print the last N trades"
     )
     parser.add_argument(
+        "--trade-log", nargs="?", const="bars", choices=["bars", "day"],
+        default=None, metavar="CONTEXT",
+        help="log the bars and indicator values around every trade entry, "
+             "SL/TP modification, and exit: 'bars' (default, the last "
+             "--log-bars bars) or 'day' (the whole calendar day)",
+    )
+    parser.add_argument(
+        "--log-bars", type=int, default=120, metavar="N",
+        help="bars of context per moment when --trade-log=bars (default 120)",
+    )
+    parser.add_argument(
+        "--log-dir", default="trade_logs", metavar="DIR",
+        help="where trade log folders are written (default: trade_logs/)",
+    )
+    parser.add_argument(
         "--point", type=float, default=None,
         help="instrument point size override (default: from the dataset's stored spec)",
     )
@@ -124,7 +147,11 @@ def main(argv: list[str] | None = None) -> int:
         commission_per_lot=args.commission,
         instrument=instrument,
     )
-    result = Backtester(df, strategy, config, intrabar_df=intrabar_df).run_all()
+    backtester = Backtester(
+        df, strategy, config, intrabar_df=intrabar_df,
+        record_events=args.trade_log is not None,
+    )
+    result = backtester.run_all()
 
     print(f"\n{args.strategy} on {args.symbol} {args.timeframe} "
           f"({len(df):,} bars, {df['time'].iloc[0]} .. {df['time'].iloc[-1]})")
@@ -132,6 +159,19 @@ def main(argv: list[str] | None = None) -> int:
           f"contract={instrument.contract_size:,.0f} (1 pip = {instrument.pip})")
     print(f"Params: {vars(strategy.p)}\n")
     print(format_stats(result.stats))
+
+    if args.trade_log is not None:
+        folder = Path(args.log_dir) / run_folder_name(
+            f"{args.symbol.upper()}_{args.timeframe}", args.strategy
+        )
+        report = log_run(
+            df, result, strategy, folder,
+            TradeLogSpec(
+                mode=ContextMode(args.trade_log), context_bars=args.log_bars
+            ),
+        )
+        print(f"\n{report.message()}")
+        print(f"  {report.folder}")
 
     if args.trades and result.trades:
         print(f"\nLast {min(args.trades, len(result.trades))} trades:")

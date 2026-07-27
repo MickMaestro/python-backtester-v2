@@ -5,9 +5,10 @@ data from MT5, run backtests with a Python strategy API, and watch a **visual re
 the backtest — candles drawing in sequence with trades opening, adjusting, and closing on
 the chart.
 
-> **Status:** Phases 1–6 are complete (this is the **v2** repository — the starting point
-> carries the full v1 codebase forward). Phase 7 below is the next block of work: it is
-> planned, not yet implemented. Work continues one phase at a time, pushed for review.
+> **Status:** Phases 1–7 are complete (this is the **v2** repository — the starting point
+> carries the full v1 codebase forward). Phase 8 below — converting MQL5 custom
+> indicators into Python indicators that draw on the app's charts — is the next block of
+> work: planned, not yet implemented. Work continues one phase at a time, pushed for review.
 
 ---
 
@@ -95,18 +96,49 @@ Python Backtester/
 
 ```
 backtester/
+├── engine/
+│   └── trade_log.py          # Qt-free writer: per-moment bars + indicators → Parquet
 ├── strategy/
 │   └── manual.py             # ManualStrategy: no-op on_bar, exposes broker to the GUI
 └── ui/
     ├── manual_panel.py       # manual order-entry panel (direction, risk sizing, manage)
-    ├── screenshots.py        # ScreenshotCapturer: entry/exit PNG pairs + manifest
+    ├── trade_log.py          # trade-log settings (QSettings) + dialog
     └── chart/
         └── order_lines.py    # three draggable lines (entry / TP / SL) + risk→lots math
 ```
-Plus edits to `strategy/indicators.py` (applied-price selection), `ui/chart/chart_widget.py`
-(draggable order lines, fixed-size export grab), `ui/chart_tab.py` + `ui/backtest_tab.py`
-(applied-price picker, manual mode, speed slider, screenshot checkbox), and
-`ui/chart/replay_controller.py` (continuous speed from a slider).
+Plus edits to `strategy/indicators.py` (applied-price selection; indicator registry so the
+log can name what a strategy built), `ui/chart/chart_widget.py` (draggable order lines),
+`engine/backtester.py` (opt-in position-event recording), `ui/chart_tab.py` +
+`ui/backtest_tab.py` (applied-price picker, manual mode, speed slider, trade logging),
+`ui/chart/replay_controller.py` (continuous speed from a slider), and `run_backtest.py`
+(`--trade-log`).
+
+**New modules planned for Phase 8 (MQL5 indicator conversion):**
+
+```
+backtester/
+├── indicators/               # indicator plugin layer (distinct from strategy/indicators.py)
+│   ├── base.py               # Indicator, Plot, DrawStyle, Pane, Level
+│   ├── loader.py             # discovery + hot reload of indicators/*.py
+│   └── builtin.py            # SMA/EMA/RSI/ATR as plugins
+├── mql5/                     # .mq5 → Python conversion
+│   ├── lexer.py  parser.py   # MQL5 subset front end
+│   ├── metadata.py           # #property block, input declarations
+│   ├── translate.py          # AST → Python source
+│   ├── runtime.py            # MQL5 stdlib shim (iMA family, Math*, Array*, EMPTY_VALUE)
+│   └── report.py             # what converted, what became a TODO, what was refused
+└── ui/
+    ├── indicators_tab.py     # library, inputs, preview, Import .mq5…
+    ├── param_form.py         # param → widget form, extracted from backtest_tab
+    └── chart/
+        ├── indicator_layer.py  # price-pane plots, clipped to revealed bars
+        └── indicator_pane.py   # separate sub-window with levels, X-linked
+indicators/                   # user + converted indicator .py files (like strategies/)
+```
+Plus edits to `ui/chart/chart_widget.py` (attach/detach indicators, panes, overlay
+clipping), `ui/chart_tab.py` + `ui/backtest_tab.py` (indicators on both charts),
+`strategy/indicators.py` (`smma`, `lwma`, `IndicatorFactory.custom`), `strategy/base.py`,
+and `packaging/backtester.spec` (bundle `indicators/`).
 
 **Key design decision — engine/GUI separation:** the engine is a pure-Python generator
 that yields events (`new bar`, `order opened`, `SL modified`, `position closed`, `equity
@@ -169,7 +201,7 @@ optimizer).
 - Tick/M1 intrabar accuracy mode, parameter optimization (grid search, multiprocessing)
   with results table, strategy hot-reload, PyInstaller build.
 
-**Phase 7 — v2 features** *(planned — the next block of work; see §7 for full design)*
+**Phase 7 — v2 features** ✅ *(done — see §7 for full design)*
 - **7a. Applied price for indicators** — every indicator (SMA, EMA, RSI, highest/lowest,
   and where meaningful, others) can be computed on a chosen applied price: Close, Open,
   High, Low, Median (HL/2), Typical (HLC/3), Weighted (HLCC/4). Selectable in the Chart
@@ -180,11 +212,28 @@ optimizer).
   risk, or a fixed lot size. Playback has a pause button, a speed **slider**, and a
   skip-to-next-candle button. Manual trades run through the same broker/engine, so stats,
   equity, and results work identically.
-- **7c. Trade screenshots** — a checkbox in the (automatic) backtest setup that, when
-  ticked, saves a chart screenshot at every trade's entry and exit, named as pairs
-  (`0001_entry.png` / `0001_exit.png`) in a per-run folder with a manifest.
+- **7c. Trade context logs** — a checkbox in the (automatic) backtest setup that, when
+  ticked, writes the bars and indicator values around every trade entry, SL/TP
+  modification, and exit to a per-run folder. *(Originally specced as chart screenshots;
+  replaced by data, which is analyzable — see §7c.)*
 - *Milestone: manually trade EURUSD candle by candle with risk-based sizing; run an
-  MA-cross backtest with an EMA on Typical price and a folder of entry/exit screenshots.*
+  MA-cross backtest with an EMA on Typical price and a folder of per-trade context data.*
+
+**Phase 8 — MQL5 indicator conversion** *(planned — see §8 for full design)*
+- **8a. Python indicator plugin system** — indicators become loadable objects (multiple
+  buffers, own chart window, draw styles, inputs) instead of the two hard-wired functions
+  in the Chart tab; a new **Indicators tab** manages them, and they draw on the backtest
+  replay chart too (clipped to revealed bars).
+- **8b. `.mq5` importer** — pick an MQL5 custom indicator source file and convert it to a
+  readable Python indicator file in `indicators/`: `#property` block → plots/window/levels,
+  `input`s → parameters, `OnCalculate` → a vectorized/looped `calculate()`. Anything
+  outside the supported subset is reported, not silently mistranslated.
+- **8c. Fidelity, chaining, and strategy access** — compare a converted indicator against
+  values exported from MT5 to prove the conversion, cover the `iMA`-family built-in
+  handles, `iCustom` chaining between converted indicators, and `self.ind.custom(…)` so
+  strategies can trade them.
+- *Milestone: import a real `.mq5` oscillator, see it draw in its own pane under the
+  candles matching MT5's values to within rounding, and trade it from a strategy.*
 
 ## 7. Phase 7 design (v2 features)
 
@@ -280,26 +329,243 @@ SL. GUI wiring smoke-tested offscreen.
 the broker already supports multiple open positions, so start with one-at-a-time for a
 clean UX and revisit.
 
-### 7c. Trade screenshots
+### 7c. Trade context logs
 
-A **checkbox** in the automatic backtest setup — *Capture trade screenshots* — saves a
-chart image at each trade's entry and exit.
+A **checkbox** in the automatic backtest setup — *Log trade context data* — writes, for
+every moment a trade had, the bars around it and every indicator value the strategy
+computed.
 
-- **Naming**: `NNNN_entry.png` / `NNNN_exit.png` (zero-padded trade id) so the two frames
-  are an obvious pair. A `manifest.csv` maps id → files, direction, lots, entry/exit
-  time & price, and net.
-- **Folder**: `screenshots/<symbol>_<tf>_<strategy>_<YYYYMMDD-HHMMSS>/` next to the app
-  (base dir configurable), one folder per run.
-- **Capture path** (`screenshots.py`, `ScreenshotCapturer`): render deterministically with
-  a **post-run pass** so it works for both fast and replay runs and gives consistent
-  framing — for each trade, reveal candles up to the entry bar, centre the entry region,
-  grab the chart to a fixed-size `QPixmap` (e.g. 1280×720) → entry PNG; reveal to the exit
-  bar, centre the exit region, grab → exit PNG. (Live grab-on-event during replay is a
-  possible fast path but framing is inconsistent, so the render pass is the default.)
-- Runs on a copy/offscreen chart so it doesn't disturb the user's current view; guard for
-  large trade counts (warn/limit, e.g. skip past N trades or make it opt-in per range).
-- **Tests**: capturing a small run writes the right number of paired files + a manifest row
-  per trade; filenames pair correctly.
+> **Superseded design.** This was originally specced as *trade screenshots*: a PNG of the
+> chart at each entry and exit, rendered by a post-run pass over an offscreen chart. That
+> was built and worked, but a picture is the wrong artifact — you cannot query it, diff it,
+> or feed it anywhere. The same post-run pass now emits **data**, which answers "why did it
+> trail the stop *there*" in a way an image never can, and drops the Qt dependency so the
+> CLI can produce it too. The screenshot module was removed rather than kept alongside.
+
+- **Folder**: `trade_logs/<symbol>_<tf>_<strategy>_<YYYYMMDD-HHMMSS>/`, one per run,
+  holding `context.parquet`, `manifest.csv`, and `indicators.csv`.
+- **`context.parquet` is long-form**, not one file per moment: `frame_id` tags the moment
+  (`0007_entry`, `0007_modify_01`, `0007_exit`) and `offset` is each bar's distance from
+  it (0 = the moment, negative = history), so a run loads in one `read_parquet` and slices
+  by trade. Columns are the key fields, then every bar column, then every indicator.
+- **The window** is either the **last N bars** up to the moment — the history the strategy
+  had, no look-ahead — or the **whole calendar day** containing it, which does include what
+  followed (a review tool, not a decision input; those rows carry `offset > 0`).
+- **Indicators are discovered, not declared.** Strategies just assign them
+  (`self.trend = self.ind.ema(50)`), so `collect_indicators` inspects the instance for
+  numeric series as long as the data, minus the bar arrays `bind` attaches, and names each
+  column after its attribute. `IndicatorFactory` now records every series it hands out with
+  the call that produced it, so `indicators.csv` can say `trend → ema(50, Close)` — that
+  registry keeps the array itself, since ids are reused once an array is collected.
+- **Modifications are logged too**, not just entry/exit — an SL/TP change is a decision,
+  and for a trailing stop it is *the* decision. The manifest carries the previous levels
+  alongside the new ones, so a trailing stop reads as a chain of `old_sl → sl`.
+- **The moments come from a recorded event stream.** With `record_events=True` the engine
+  keeps every position opened/modified/closed event as a **snapshot**
+  (`dataclasses.replace`) — `Position` is mutable, so storing the live object would report
+  the final stop at every moment and quietly make every trailing-stop row wrong. Recording
+  is opt-in per run, so an optimizer sweep never pays for it.
+- **Qt-free writer** (`engine/trade_log.py`) with the settings and dialog in
+  `ui/trade_log.py`, so `run_backtest.py --trade-log [bars|day]` produces the same folder
+  headlessly.
+- A **max moments per run** cap (default 1,000) with a cancellable progress dialog — a
+  273-trade GER40 run of `trailing_trend` produces ~1,470 moments. Manual sessions don't
+  log: the decisions were the user's, and there are no indicator series behind them.
+- **Tests**: event recording and snapshot correctness; indicator discovery (recipes, bar
+  arrays excluded, column-name clashes, hand-rolled series); window shapes for both modes
+  including clipping at the start of the data; manifest/indicators contents; kind
+  selection, cap, cancel; settings roundtrip and dialog behaviour.
+
+## 8. Phase 8 design — MQL5 indicator conversion
+
+**Goal:** take an existing MetaTrader 5 custom indicator (`.mq5` source) and turn it into a
+Python indicator this app computes and draws on its charts — the Chart tab *and* the
+backtest replay — with its inputs editable in the GUI and its buffers readable from a
+strategy.
+
+**Where today's code stands.** Indicators are currently two hard-wired functions
+(`_INDICATORS = {"SMA": …, "EMA": …}` in `ui/chart_tab.py`) drawn through
+`ChartWidget.add_overlay(name, values)`, which paints one fixed-width line on the price
+pane over the *whole* array. An MQL5 indicator needs none of those assumptions: it has
+several buffers, may live in its own window, draws lines/histograms/arrows in declared
+colours, and carries its own inputs. So the plugin model (8a) has to land before the
+converter (8b) has anywhere to put its output.
+
+### 8a. Python indicator plugin system
+
+New package `backtester/indicators/` (the vectorized maths stays in
+`backtester/strategy/indicators.py` — the new package is the *plugin* layer, and the two
+are imported under distinct paths):
+
+```
+backtester/indicators/
+├── base.py       # Indicator base class, Plot / DrawStyle / Pane / Level specs
+├── loader.py     # discovery + hot reload (mirrors strategy/loader.py)
+└── builtin.py    # SMA/EMA/RSI/ATR wrapped as plugins, so there is one code path
+indicators/       # user + converted indicator .py files (next to the app, like strategies/)
+```
+
+The authored API, deliberately shaped like `Strategy` so the existing param-form code and
+the loader pattern carry over:
+
+```python
+from backtester.indicators.base import DrawStyle, Indicator, Level, Pane, Plot
+
+class Supertrend(Indicator):
+    display_name = "SuperTrend"
+    pane = Pane.PRICE                     # or Pane.SEPARATE (own sub-window)
+    params = {"period": 10, "multiplier": 3.0}
+    plots = [
+        Plot("Up",   style=DrawStyle.LINE, color="#26a69a", width=2),
+        Plot("Down", style=DrawStyle.LINE, color="#ef5350", width=2),
+    ]
+    levels: list[Level] = []              # horizontal lines, e.g. RSI 30/70
+
+    def calculate(self, df) -> dict[str, np.ndarray]:
+        """Arrays aligned to df, NaN where undefined — the existing contract."""
+```
+
+- `params` keeps the numeric/bool convention `Strategy.params` uses, so the auto-generated
+  form in `backtest_tab._rebuild_param_form` is **extracted to `ui/param_form.py`** and
+  reused verbatim for indicator inputs (no second implementation to keep in step).
+- `DrawStyle`: `LINE, HISTOGRAM, ARROW, SECTION, FILL, NONE` (NONE = a calculation-only
+  buffer that is computed but not drawn — MQL5's `INDICATOR_CALCULATIONS`).
+- `loader.py` mirrors `strategy/loader.py` exactly: fresh `compile()` on every discovery
+  (so edits are never missed), `indicators/` next to `app.py` in a source checkout and next
+  to the `.exe` when frozen, errors collected and surfaced rather than raised.
+
+**Chart plumbing** (`ui/chart/`):
+- `indicator_layer.py` — owns the items for each attached indicator on the price pane and
+  applies the draw style; crucially it takes a **`set_visible_length(k)`** like
+  `CandlestickItem` and `SeparatorLines` do. Today's `add_overlay` draws the full array;
+  the Chart tab gets away with it because `set_data` clears overlays and the replay has
+  none. Putting indicators on the replay chart without clipping would draw the indicator
+  ahead of the revealed candles — i.e. leak the future — so clipping is part of this phase,
+  wired from `ChartWidget.reveal_to`.
+- `indicator_pane.py` — a stacked sub-pane for `Pane.SEPARATE` indicators, built the same
+  way the equity sub-chart already is (`pg.PlotWidget` with
+  `getPlotItem().setXLink(self.chart.plot.getPlotItem())`, `hideAxis("bottom")`), plus
+  level lines and optional fixed min/max.
+- `ChartWidget` gains `attach_indicator / detach_indicator / clear_indicators` and hosts
+  zero or more panes below the candles; `add_overlay` stays as the thin single-line case.
+
+**Indicators tab** (`ui/indicators_tab.py`) — the "section" this phase is really about:
+- Left: the library of discovered indicators (built-ins + everything in `indicators/`),
+  each showing its source file and status (*clean* / *has TODOs* / *load error*), with
+  **Reload** and **Import .mq5…**.
+- Right: the selected indicator's inputs (auto-form), its plots with colour/width/style
+  overrides, and a **live preview chart** on the currently selected dataset.
+- Attaching: a checkbox per indicator marks it *attached*; attached indicators + their
+  parameter values are persisted in QSettings and applied to both the Chart tab and the
+  Backtest tab's replay chart. The Chart tab's existing SMA/EMA toolbar controls stay as
+  the quick path and are re-pointed at the plugin registry.
+
+### 8b. The `.mq5` importer
+
+New package `backtester/mql5/`:
+
+```
+backtester/mql5/
+├── lexer.py       # MQL5 tokens (C-like), preprocessor lines, comments kept for labels
+├── parser.py      # recursive-descent parser → AST for the supported subset
+├── metadata.py    # #property block, input/sinput declarations, enums
+├── translate.py   # AST → Python source
+├── runtime.py     # the MQL5 standard-library shim the generated code imports
+└── report.py      # ConversionReport: translated / TODO / unsupported, with line numbers
+```
+
+**Output is a file, not a hidden runtime.** Conversion writes a readable, PEP-8 Python
+module into `indicators/` with a header naming the source `.mq5` and the converter version,
+the `Indicator` subclass, and the translated body. The user can open it, fix a TODO, and
+hit Reload — the same loop that already exists for strategies. A hidden interpreter would
+make failures unfixable; generated source makes them a normal editing task.
+
+**What maps to what:**
+
+| MQL5 | Python indicator |
+|---|---|
+| `#property indicator_separate_window` / `_chart_window` | `pane = Pane.SEPARATE / Pane.PRICE` |
+| `indicator_buffers N` / `indicator_plots M` | N buffers created; the first M become `plots`, the rest are `DrawStyle.NONE` |
+| `indicator_label1/type1/color1/width1/style1` | one `Plot(...)` per index |
+| `indicator_level1 30.0`, `indicator_minimum/maximum` | `levels = [Level(30.0)]`, pane y-range |
+| `input int InpPeriod = 14; // Period` | `params = {"period": 14}`, label from the trailing comment (MT5 uses it the same way) |
+| `OnInit()` + `SetIndexBuffer(k, Buf, …)` | NaN-filled `np.empty(len(df))` buffers created at the top of `calculate` |
+| `OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread)` | `calculate(df)`; the arrays are the df columns |
+| `OnCalculate(rates_total, prev_calculated, begin, price[])` | `calculate(df)` with an added `applied` param feeding `price_series(df, applied)` — reuses the Phase 7a `AppliedPrice` enum |
+| `iMA / iRSI / iATR / iStdDev / iBands / iMACD / iCCI / iADX / iStochastic` handles + `CopyBuffer` | `runtime.py` shims computing MT5's formulas, returning arrays; `CopyBuffer(h, b, 0, rates_total, dst)` → an assignment |
+| `MODE_SMA/EMA/SMMA/LWMA`, `PRICE_*` | existing `sma`/`ema` + **new `smma` and `lwma`** in `strategy/indicators.py`; `PRICE_*` → `AppliedPrice` |
+| `EMPTY_VALUE`, `PLOT_EMPTY_VALUE`, `DBL_MAX` | `np.nan` |
+| `MathAbs/Max/Min/Sqrt/Pow/Log/Floor/Ceil`, `ArrayInitialize/ArraySize/ArrayResize` | numpy/`math` equivalents |
+| `_Symbol / _Period / _Point / _Digits` | dataset key + the stored contract spec (`DataStore.get(...)` already carries `point` and `digits`) |
+| `clrRed`, `C'0,128,255'`, `0x00FF00` | hex colours — note MQL5 hex literals are **BGR**, not RGB |
+
+**The three semantics that decide whether this works at all:**
+
+1. **Index direction.** `OnCalculate`'s arrays are forward-indexed (0 = oldest) unless the
+   indicator calls `ArraySetAsSeries(arr, true)`, which flips 0 to *newest*. The translator
+   tracks the as-series flag per array through the function and rewrites series-indexed
+   reads as `arr[n - 1 - i]`, emitting forward-indexed Python throughout (matching the rest
+   of the app). If a flag is set conditionally, or through an alias the parser can't
+   resolve statically, conversion **fails loudly** on that buffer rather than emitting code
+   that is silently reversed — a reversed indicator looks plausible and is completely wrong.
+2. **`prev_calculated`.** MT5 recomputes incrementally; this app precomputes the whole
+   array once per dataset. The translator resolves the usual
+   `int start = (prev_calculated == 0) ? period : prev_calculated - 1;` idiom to the
+   `prev_calculated == 0` branch and always computes from bar 0, which is what a full
+   precompute means. Documented, because it changes nothing for well-written indicators and
+   *does* change behaviour for ones that hide state across calls (those get a warning).
+3. **Unsupported constructs are refused, not guessed.** `ObjectCreate` and friends,
+   `OnTimer`/`OnChartEvent`, file/network/`DLL` calls, `#import`, tick-level logic, and
+   access to another symbol or timeframe (`iCustom`/`CopyRates` on a different chart) all
+   emit a `# TODO(mql5): <original line>` plus a `raise NotImplementedError` in the affected
+   branch, and land in the report with the source line number. A partial conversion that
+   says exactly what it couldn't do is far more useful than a complete-looking wrong one.
+
+**Import flow (Indicators tab → *Import .mq5…*):** file picker → parse → a report panel
+showing detected window placement, plots, inputs, and every warning against its source
+line, next to the generated Python; a **preview** renders it on the selected dataset
+immediately. Buttons: *Save to `indicators/`*, *Copy source*, *Cancel*. Nothing is written
+until the user saves.
+
+### 8c. Fidelity, chaining, and strategy access
+
+- **Prove the conversion.** *Compare with MT5…* loads a CSV of the indicator's buffer
+  values exported from the MT5 terminal (Data Window → save, or a two-line dumper EA) for
+  the same symbol/timeframe, aligns it on timestamps, and reports max / mean absolute
+  error per buffer with the worst offenders listed. This is what turns "it looks about
+  right" into a checkable claim, and it doubles as the regression harness.
+- **Built-in handle coverage** — fill out the `iMA` family in `runtime.py`, each verified
+  against MT5 output by the tool above.
+- **`iCustom`** — resolve to another converted indicator in `indicators/`, so layered
+  indicators convert as a set.
+- **Strategy access** — `self.ind.custom("supertrend", period=10)["Up"]` in
+  `IndicatorFactory`, so a converted indicator can be traded, optimized, and replayed like
+  any built-in. Results are cached per (dataset, indicator, params) so the optimizer's
+  worker processes don't recompute per combination.
+- **Packaging** — `packaging/backtester.spec` bundles `indicators/` the way it already
+  bundles `strategies/`, and the loader reads it from next to the `.exe` at runtime.
+- **README** — a new *Custom indicators* section covering both authoring and importing.
+
+### Tests
+
+- **Parser/translator**: small `.mq5` snippets → expected Python, including the as-series
+  rewrite, the `prev_calculated` idiom, buffer/plot extraction, and colour literal parsing
+  (a BGR hex regression test).
+- **Golden conversions**: three or four real indicators (a price-pane MA envelope, a
+  separate-window oscillator with levels, an ATR-based trailing indicator) converted and
+  checked against committed reference buffer CSVs within tolerance.
+- **Runtime shim**: `iMA` in all four MA modes and `iRSI`/`iATR` against known values.
+- **Refusals**: an indicator using `ObjectCreate` converts with a TODO and a report entry
+  rather than raising at import time.
+- **Chart (offscreen, as `tests/test_chart.py` already does)**: a multi-plot indicator
+  renders, a separate pane is created and X-linked, and `reveal_to(k)` leaves nothing drawn
+  past bar `k`.
+
+### Phasing
+
+8a → 8b → 8c, one push each. 8a is independently valuable (proper multi-buffer indicators
+on the replay chart) even if the converter is never used, so it is worth doing first and
+reviewing on its own.
 
 ## 6. Risks / open questions
 
@@ -317,9 +583,27 @@ chart image at each trade's entry and exit.
 - **Manual risk sizing without an SL** — % / cash risk modes need a stop distance; with no
   SL there is nothing to size against. Disable those modes (or require an SL) rather than
   guess, and always show the computed lots before the order is placed.
-- **Screenshot volume & performance** — a run with thousands of trades would write
-  thousands of PNGs and take a while to render. Make capture opt-in, warn past a threshold,
-  render off the user's live chart, and consider a bar-range limit.
-- **Offscreen chart grab sizing** — grabbing a widget with no valid size yields a blank
-  image; render screenshots at a fixed export resolution on a sized (possibly hidden)
-  chart so output is consistent regardless of window state.
+- **Trade log volume** — moments are dominated by SL/TP modifications, not trades: a
+  273-trade run of `trailing_trend` produces ~1,470 of them, and each writes a whole window
+  of bars. Logging is opt-in, capped per run (default 1,000 moments), and cancellable; day
+  mode on M1 data is the expensive corner (a day is 1,440 bars per moment).
+- **Indicator discovery is by inspection** — strategies never declare their indicators, so
+  the log finds numeric series on the instance. A strategy stashing an unrelated
+  full-length numeric array would see it logged as an indicator (harmlessly, with no
+  recipe); the bar arrays `bind` attaches are excluded by name.
+- **MQL5 is a whole language** — a general transpiler is not the goal and would never
+  finish. Scope is explicitly *single-symbol, single-timeframe `OnCalculate` indicators*;
+  success is measured by that class converting cleanly and everything else being reported
+  with a source line number. Expect to widen the subset from real files, not up front.
+- **Silent mistranslation is the real danger** — a reversed array or an off-by-one warm-up
+  produces a plausible-looking line that is wrong, and a backtest built on it is wrong
+  too. Mitigations: refuse rather than guess on unresolved as-series flags, and make the
+  MT5 value-comparison tool (8c) the standard way a conversion is accepted.
+- **Per-bar loops in Python** — a translated `OnCalculate` loop over 100k bars runs in
+  roughly 0.1–1 s. Acceptable for a one-off precompute; cache per (dataset, indicator,
+  params), and vectorize the common patterns in `runtime.py` rather than in generated code.
+- **Naming** — `backtester/indicators/` (plugin layer) alongside the existing
+  `backtester/strategy/indicators.py` (maths) is a little close. Distinct import paths keep
+  it unambiguous in code; revisit only if it proves confusing in practice.
+- **Licensing** — converting a third-party indicator's source is the user's call, not the
+  app's. Note it in the import dialog; do not ship converted third-party indicators.

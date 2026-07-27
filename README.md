@@ -87,6 +87,68 @@ candles, every trade marker, full equity curve) and opens the Results tab.
 Hit *Start Replay* afterwards to watch the same run animated — runs are
 deterministic.
 
+## Trade context logs
+
+Tick **Log trade context data** and after the run every moment of every trade —
+**entries, SL/TP modifications, and exits** — is written out as *data*: the bars
+around it plus every indicator value the strategy computed, so a decision can be
+inspected as numbers instead of eyeballed. It works the same for a replay or a
+*Run Fast*, because logging is a post-run pass over the events the engine
+recorded.
+
+A run produces one folder, `trade_logs/<dataset>_<strategy>_<timestamp>/`:
+
+| File | What's in it |
+|---|---|
+| `context.parquet` | every moment's window of bars, stacked into one table |
+| `manifest.csv` | one row per moment — what happened and which window it wrote |
+| `indicators.csv` | each indicator column and the call that produced it |
+
+`context.parquet` is long-form: `frame_id` identifies the moment
+(`0007_entry`, `0007_modify_01`, `0007_exit`), and `offset` is each bar's
+distance from it — `0` is the moment itself, negative is history. So a whole run
+loads in one `pd.read_parquet` and slices by trade:
+
+```python
+ctx = pd.read_parquet("trade_logs/GER40_H1_trailing_trend_20260727-2359/context.parquet")
+ctx.columns
+# frame_id, trade_id, kind, event_index, bar_index, offset,
+# time, open, high, low, close, tick_volume, spread, real_volume, trend, rng
+
+ctx[ctx.frame_id == "0001_modify_05"].tail(3)
+#       frame_id   kind  bar_index  offset                time    close    trend      rng
+# 0001_modify_05 modify        111      -2 2024-01-05 15:00:00 1.090920 1.088227 0.001609
+# 0001_modify_05 modify        112      -1 2024-01-05 16:00:00 1.091865 1.088370 0.001633
+# 0001_modify_05 modify        113       0 2024-01-05 17:00:00 1.092833 1.088545 0.001657
+```
+
+Indicator columns are named after the strategy's own attributes — `self.trend`
+becomes `trend` — and `indicators.csv` says what each one was:
+
+```
+column,attribute,recipe
+trend,trend,"ema(50, Close)"
+rng,rng,atr(14)
+```
+
+`manifest.csv` carries trade id, kind, bar index, time, direction, lots, price,
+SL/TP (plus the previous levels for a modification), net, close reason, and the
+window each moment logged.
+
+**Trade log…** configures it: which moments to log, the **context window**, and
+a **max moments per run** cap (1,000 by default — a trailing stop modifies its
+SL on most bars, so a 273-trade GER40 run produces ~1,470 moments). The window
+is either:
+
+- **Last N bars** (120 by default) — ending *at* the moment, so the log holds
+  only what the strategy could see, no look-ahead; or
+- **Whole day** — every bar of that calendar day, which does include what came
+  after the moment. It's a review tool, not a decision input, and `offset > 0`
+  marks those bars.
+
+Manual sessions don't log — the decisions were yours, and there are no indicator
+series behind them.
+
 ## Manual trading (an alternative to watching the replay)
 
 The Backtest tab's **Mode** selector chooses how a run plays out:
@@ -142,7 +204,7 @@ After any run (replay or fast), the Results tab holds:
 - export buttons for a trades CSV and a summary text report.
 
 Your last-used dataset, strategy, parameter values, account settings, replay
-speed, and window size are remembered between sessions.
+speed, trade log options, and window size are remembered between sessions.
 
 ## Optimizer tab
 
@@ -194,7 +256,12 @@ dataset in your library:
 python run_backtest.py EURUSD H1
 python run_backtest.py GER40 H1 --strategy ma_cross --param fast=12 --param slow=48 --trades 10
 python run_backtest.py XAUUSD M15 --strategy rsi_reversion --commission 7 --balance 5000
+python run_backtest.py GER40 H1 --strategy trailing_trend.TrailingTrend --trade-log day
 ```
+
+Trade context logs work headlessly too: `--trade-log` (or `--trade-log day`)
+writes the same folder the GUI does, with `--log-bars` for the window size and
+`--log-dir` for where it goes.
 
 Built-in example strategies: `ma_cross`, `rsi_reversion`. A strategy is a
 small Python class:

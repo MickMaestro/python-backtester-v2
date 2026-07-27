@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QProgressBar,
+    QProgressDialog,
     QPushButton,
     QSlider,
     QSpinBox,
@@ -32,6 +33,7 @@ from backtester.data.store import DataStore, StoreError
 from backtester.engine.backtester import BacktestConfig, Backtester
 from backtester.engine.events import BarEvent, EquityEvent
 from backtester.engine.instrument import InstrumentSpec
+from backtester.engine.trade_log import count_moments, log_run, run_folder_name
 from backtester.strategy import loader
 from backtester.strategy.manual import ManualStrategy
 from backtester.ui.chart.chart_widget import BACKGROUND, ChartWidget
@@ -40,6 +42,7 @@ from backtester.ui.chart.trade_markers import TradeLayer
 from backtester.ui.manual_panel import ManualPanel
 from backtester.ui.manual_trader import ManualTrader
 from backtester.ui.settings import app_settings, cast_like
+from backtester.ui.trade_log import TradeLogDialog, TradeLogSettings
 
 INITIAL_WINDOW = 300
 #: Bars played before a manual session hands over, so there is context to trade.
@@ -83,6 +86,7 @@ class BacktestTab(QWidget):
         self._loaded_key: str | None = None
         self._controller: ReplayController | None = None
         self._fast_worker: FastRunWorker | None = None
+        self._backtester: Backtester | None = None
         self._param_widgets: dict[str, QWidget] = {}
         self._strategies: dict[str, loader.StrategyEntry] = {}
         self._equity_x: list[int] = []
@@ -204,10 +208,39 @@ class BacktestTab(QWidget):
         column.addWidget(account_group)
         column.addLayout(run_row)
         column.addWidget(self.reset_button)
+        column.addWidget(self._build_trade_log_row())
+        column.addWidget(self.log_note)
         column.addWidget(self.manual_panel)
         column.addWidget(self.setup_note)
         column.addStretch()
         return panel
+
+    def _build_trade_log_row(self) -> QWidget:
+        """Log-trade-context toggle plus its settings dialog button."""
+        self._log_settings = TradeLogSettings.load()
+
+        self.log_check = QCheckBox("Log trade context data")
+        self.log_check.setToolTip(
+            "After the run, write the bars and every indicator value around "
+            "each trade entry, SL/TP modification, and exit."
+        )
+        self.log_check.setChecked(self._log_settings.enabled)
+        self.log_check.toggled.connect(self._on_trade_log_toggled)
+        self.log_button = QPushButton("Trade log…")
+        self.log_button.setToolTip("What to log, how much context, folder")
+        self.log_button.clicked.connect(self._edit_trade_log_settings)
+
+        self.log_note = QLabel("")
+        self.log_note.setWordWrap(True)
+        self.log_note.setStyleSheet("color: gray;")
+
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.log_check, stretch=1)
+        layout.addWidget(self.log_button)
+        self.log_row = row
+        return row
 
     # ---------------------------------------------------------------- mode
 
@@ -223,6 +256,10 @@ class BacktestTab(QWidget):
         self.manual_panel.setVisible(manual)
         # A fast run has nothing to drive in manual mode — you are the strategy.
         self.fast_button.setVisible(not manual)
+        # The log documents a strategy's decisions; in manual mode they are
+        # yours, and you were there.
+        self.log_row.setVisible(not manual)
+        self.log_note.setVisible(not manual)
         self.start_button.setText(
             "▶  Start Manual Session" if manual else "▶  Start Replay"
         )
@@ -414,9 +451,15 @@ class BacktestTab(QWidget):
             instrument=self._instrument(),
         )
         self._save_settings()
-        return Backtester(
-            self._df, strategy, config, intrabar_df=self._intrabar_df()
+        # Kept so the post-run log can read the strategy's indicator series.
+        self._backtester = Backtester(
+            self._df,
+            strategy,
+            config,
+            intrabar_df=self._intrabar_df(),
+            record_events=self._logging_enabled(),
         )
+        return self._backtester
 
     def _intrabar_df(self):
         key = self.intrabar_combo.currentText()
@@ -534,6 +577,7 @@ class BacktestTab(QWidget):
         )
         self._show_summary(result)
         self.run_completed.emit(result, self._run_title(), True)
+        self._write_trade_log(result)
 
     def _on_fast_failed(self, message: str) -> None:
         self._finish_fast_ui()
@@ -608,6 +652,7 @@ class BacktestTab(QWidget):
         self.step_button.setEnabled(False)
         self.ff_button.setEnabled(False)
         self.run_completed.emit(result, self._run_title(), False)
+        self._write_trade_log(result)
 
     def _show_summary(self, result) -> None:
         stats = result.stats
@@ -618,6 +663,77 @@ class BacktestTab(QWidget):
             f"PF {stats['profit_factor']:.2f}, "
             f"max DD {stats['max_drawdown_pct']:.1f}%"
         )
+
+    # ---------------------------------------------------------- trade log
+
+    def _logging_enabled(self) -> bool:
+        # Manual sessions log nothing: the decisions were yours, not a
+        # strategy's, and there are no indicator series behind them.
+        return self.log_check.isChecked() and not self.is_manual
+
+    def _on_trade_log_toggled(self, checked: bool) -> None:
+        self._log_settings.enabled = checked
+        self._log_settings.save()
+        if checked:
+            self.log_note.setText("")
+
+    def _edit_trade_log_settings(self) -> None:
+        result = TradeLogDialog.edit(self, self._log_settings)
+        if result is None:
+            return
+        self._log_settings = result
+        self._log_settings.save()
+
+    def _write_trade_log(self, result) -> None:
+        """Post-run pass: bars + indicator values per trade moment.
+
+        See ``engine/trade_log.py`` — the writing is Qt-free; this only supplies
+        the folder and a cancellable progress dialog.
+        """
+        if not self._logging_enabled() or self._df is None:
+            return
+        if self._backtester is None:
+            return
+        settings = self._log_settings
+        spec = settings.spec
+        events = getattr(result, "events", [])
+        planned = count_moments(events, spec)
+        if planned == 0:
+            self.log_note.setText(
+                "Trade log: nothing to log (no trades, or no moments selected)."
+            )
+            return
+        if spec.max_moments > 0:
+            planned = min(planned, spec.max_moments)
+
+        folder = settings.directory() / run_folder_name(
+            self._loaded_key or "run", self.strategy_combo.currentText()
+        )
+        dialog = QProgressDialog(
+            f"Logging {planned:,} trade moments…", "Cancel", 0, planned, self
+        )
+        dialog.setWindowTitle("Trade log")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        try:
+            report = log_run(
+                self._df,
+                result,
+                self._backtester.strategy,
+                folder,
+                spec,
+                progress=lambda done, _total: dialog.setValue(done),
+                should_cancel=dialog.wasCanceled,
+            )
+        except (OSError, ValueError) as exc:
+            self.log_note.setText("Trade log: failed.")
+            QMessageBox.warning(self, "Trade log", str(exc))
+            return
+        finally:
+            dialog.close()
+        self.log_note.setText(report.message())
+        self.log_note.setToolTip(str(report.folder))
 
     def apply_external_params(self, strategy_name: str, params: dict) -> None:
         """Adopt a strategy + parameter set (from the Optimizer tab)."""

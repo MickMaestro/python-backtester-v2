@@ -104,16 +104,37 @@ def lowest(values: np.ndarray, period: int) -> np.ndarray:
     return pd.Series(values).rolling(period).min().to_numpy()
 
 
+def applied_name(applied) -> str:
+    """Display name of an applied price, for indicator recipes and labels."""
+    return applied.short if isinstance(applied, AppliedPrice) else str(applied).title()
+
+
 class IndicatorFactory:
     """Bound to a bar DataFrame; used by strategies as ``self.ind.sma(20)``.
 
     Price-based indicators take an ``applied`` price (an :class:`AppliedPrice`,
     or its string value / a raw column name for back-compat), e.g.
     ``self.ind.ema(20, applied=AppliedPrice.TYPICAL)``.
+
+    Every series handed out is remembered in ``registry`` along with the call
+    that produced it ("ema(50, Typical)"), so a post-run pass can say what a
+    strategy actually computed — see ``engine/trade_log.py``.
     """
 
     def __init__(self, df: pd.DataFrame) -> None:
         self._df = df
+        #: id(array) -> (array, recipe). The array is kept so a lookup can
+        #: confirm identity: ids are reused once an array is collected.
+        self.registry: dict[int, tuple[np.ndarray, str]] = {}
+
+    def _record(self, values: np.ndarray, recipe: str) -> np.ndarray:
+        self.registry[id(values)] = (values, recipe)
+        return values
+
+    def recipe_for(self, values) -> str:
+        """The call that produced ``values``, or "" if it wasn't built here."""
+        entry = self.registry.get(id(values))
+        return entry[1] if entry is not None and entry[0] is values else ""
 
     def _source(self, name: str) -> np.ndarray:
         return self._df[name].to_numpy(dtype=float)
@@ -128,20 +149,35 @@ class IndicatorFactory:
             return self._source(applied)  # raw column name
 
     def sma(self, period: int, applied=AppliedPrice.CLOSE) -> np.ndarray:
-        return sma(self._series(applied), period)
+        return self._record(
+            sma(self._series(applied), period), f"sma({period}, {applied_name(applied)})"
+        )
 
     def ema(self, period: int, applied=AppliedPrice.CLOSE) -> np.ndarray:
-        return ema(self._series(applied), period)
+        return self._record(
+            ema(self._series(applied), period), f"ema({period}, {applied_name(applied)})"
+        )
 
     def rsi(self, period: int = 14, applied=AppliedPrice.CLOSE) -> np.ndarray:
-        return rsi(self._series(applied), period)
+        return self._record(
+            rsi(self._series(applied), period), f"rsi({period}, {applied_name(applied)})"
+        )
 
     def atr(self, period: int = 14) -> np.ndarray:
         # ATR is intrinsically High/Low/Close-based; applied price does not apply.
-        return atr(self._source("high"), self._source("low"), self._source("close"), period)
+        return self._record(
+            atr(self._source("high"), self._source("low"), self._source("close"), period),
+            f"atr({period})",
+        )
 
     def highest(self, period: int, applied=AppliedPrice.HIGH) -> np.ndarray:
-        return highest(self._series(applied), period)
+        return self._record(
+            highest(self._series(applied), period),
+            f"highest({period}, {applied_name(applied)})",
+        )
 
     def lowest(self, period: int, applied=AppliedPrice.LOW) -> np.ndarray:
-        return lowest(self._series(applied), period)
+        return self._record(
+            lowest(self._series(applied), period),
+            f"lowest({period}, {applied_name(applied)})",
+        )
