@@ -33,6 +33,11 @@ class MainWindow(QMainWindow):
         self.results_tab.trade_selected.connect(self._on_trade_selected)
         self.optimizer_tab.params_chosen.connect(self._on_params_chosen)
 
+        # Keep chart display settings in sync across every chart.
+        self._charts = [self.backtest_tab.chart, self.chart_tab.chart]
+        for chart in self._charts:
+            chart.display_settings_changed.connect(self._on_chart_settings_changed)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(self.data_tab, "Data Manager")
         self.tabs.addTab(self.backtest_tab, "Backtest")
@@ -63,6 +68,11 @@ class MainWindow(QMainWindow):
     def _on_params_chosen(self, strategy_name: str, params: dict) -> None:
         self.backtest_tab.apply_external_params(strategy_name, params)
         self.tabs.setCurrentWidget(self.backtest_tab)
+
+    def _on_chart_settings_changed(self, settings) -> None:
+        for chart in self._charts:
+            if chart.settings is not settings:
+                chart.apply_display_settings(settings)
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         app_settings().setValue("window/geometry", self.saveGeometry())

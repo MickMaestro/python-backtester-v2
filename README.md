@@ -80,6 +80,11 @@ Pick any dataset from the library in the **Chart** tab and browse it:
 - The X axis is bar-index based, so weekends and session gaps don't leave
   holes in the chart. Zoomed far out, candles switch to a close-price line
   for speed; zoom in and candles return.
+- **Display…** opens chart display settings: bullish/bearish candle colours,
+  background, an optional grid (off by default) with its colour, and period
+  separators — vertical lines at day boundaries labelled with the weekday
+  (Friday, Tuesday…), on by default, with a configurable colour. Settings are
+  saved and shared across every chart in the app.
 
 ## Backtest tab (visual replay)
 

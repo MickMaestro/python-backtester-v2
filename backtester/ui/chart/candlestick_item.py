@@ -33,6 +33,15 @@ class CandlestickItem(pg.GraphicsObject):
         self._picture: QPicture | None = None
         self._built: tuple[int, int] | None = None  # index window in the cache
         self._visible: int | None = None  # replay reveal limit; None = all
+        self._up_color = QColor(UP_COLOR)
+        self._down_color = QColor(DOWN_COLOR)
+
+    def set_colors(self, up, down) -> None:
+        self._up_color = QColor(up)
+        self._down_color = QColor(down)
+        self._picture = None
+        self._built = None
+        self.update()
 
     # ------------------------------------------------------------- data
 
@@ -140,11 +149,11 @@ class CandlestickItem(pg.GraphicsObject):
 
     def _draw_candles(self, painter: QPainter, i0: int, i1: int) -> None:
         half = self._body_width / 2
-        up_pen = QPen(UP_COLOR)
+        up_pen = QPen(self._up_color)
         up_pen.setCosmetic(True)
-        down_pen = QPen(DOWN_COLOR)
+        down_pen = QPen(self._down_color)
         down_pen.setCosmetic(True)
-        up_brush, down_brush = QBrush(UP_COLOR), QBrush(DOWN_COLOR)
+        up_brush, down_brush = QBrush(self._up_color), QBrush(self._down_color)
 
         o, h, l, c = self._o, self._h, self._l, self._c
         for i in range(i0, i1):

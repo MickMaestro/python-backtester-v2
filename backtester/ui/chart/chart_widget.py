@@ -9,9 +9,17 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .candlestick_item import CandlestickItem
+from .chart_settings import ChartSettings, ChartSettingsDialog
+from .separators import SeparatorLines, compute_separators
 from .time_axis import TimeAxisItem
 
 BACKGROUND = "#131722"
@@ -28,6 +36,8 @@ SHIFT_FRACTION = 0.2
 class ChartWidget(QWidget):
     #: Emitted when auto-follow turns off because the user panned/zoomed.
     follow_changed = Signal(bool)
+    #: Emitted with the new ChartSettings when the user edits display settings.
+    display_settings_changed = Signal(object)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -37,19 +47,27 @@ class ChartWidget(QWidget):
         self._color_cycle = 0
         self._follow = True
         self._shift = False
+        self._settings = ChartSettings.load()
 
         self.info_label = QLabel(" ")
         self.info_label.setStyleSheet(
             "font-family: Consolas, monospace; font-size: 12px; padding: 2px;"
         )
+        self.display_button = QPushButton("Display…")
+        self.display_button.setToolTip("Chart colours, grid, and period separators")
+        self.display_button.clicked.connect(self._open_display_settings)
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.addWidget(self.info_label, stretch=1)
+        top.addWidget(self.display_button)
 
         self.time_axis = TimeAxisItem()
         self.plot = pg.PlotWidget(axisItems={"bottom": self.time_axis})
-        self.plot.setBackground(BACKGROUND)
-        self.plot.showGrid(x=True, y=True, alpha=0.12)
 
         self.candles = CandlestickItem()
         self.plot.addItem(self.candles)
+        self.separators = SeparatorLines()
+        self.plot.addItem(self.separators, ignoreBounds=True)
 
         view_box = self.plot.getPlotItem().getViewBox()
         view_box.setMouseEnabled(x=True, y=False)
@@ -70,8 +88,10 @@ class ChartWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.info_label)
+        layout.addLayout(top)
         layout.addWidget(self.plot)
+
+        self.apply_display_settings(self._settings)
 
     # ---------------------------------------------------------------- data
 
@@ -87,6 +107,7 @@ class ChartWidget(QWidget):
             df["low"].to_numpy(float), df["close"].to_numpy(float),
         )
         self.time_axis.set_times(df["time"].to_numpy())
+        self.separators.set_separators(*compute_separators(df))
 
         # Allow room past the last bar so "chart shift" can hold blank space
         # on the right without the range limit fighting it.
@@ -111,6 +132,7 @@ class ChartWidget(QWidget):
         """Show only the first ``k`` bars; when following, scroll the window
         (keeping its width) so the newest candle stays in view."""
         self.candles.set_visible_length(k)
+        self.separators.set_visible_length(k)
         if k <= 0:
             return
         if self._follow:
@@ -119,6 +141,7 @@ class ChartWidget(QWidget):
 
     def reveal_all(self) -> None:
         self.candles.set_visible_length(None)
+        self.separators.set_visible_length(None)
 
     def set_follow(self, on: bool) -> None:
         self._follow = on
@@ -142,6 +165,35 @@ class ChartWidget(QWidget):
     @property
     def shift(self) -> bool:
         return self._shift
+
+    # ------------------------------------------------------ display settings
+
+    @property
+    def settings(self) -> ChartSettings:
+        return self._settings
+
+    def apply_display_settings(self, settings: ChartSettings) -> None:
+        self._settings = settings
+        self.plot.setBackground(settings.background)
+        self.candles.set_colors(settings.up_color, settings.down_color)
+
+        alpha = 0.3 if settings.grid_visible else 0.0
+        self.plot.showGrid(x=settings.grid_visible, y=settings.grid_visible, alpha=alpha)
+        axis_color = settings.grid_color if settings.grid_visible else "#787b86"
+        for name in ("left", "bottom"):
+            axis = self.plot.getAxis(name)
+            axis.setPen(pg.mkPen(axis_color))
+            axis.setTextPen(pg.mkPen("#9598a1"))
+
+        self.separators.set_style(settings.separators_visible, settings.separator_color)
+
+    def _open_display_settings(self) -> None:
+        result = ChartSettingsDialog.edit(self, self._settings)
+        if result is None:
+            return
+        result.save()
+        self.apply_display_settings(result)
+        self.display_settings_changed.emit(result)
 
     def _follow_scroll(self, k: int, force: bool = False) -> None:
         """Slide the view so the newest bar sits at its anchor, **preserving
