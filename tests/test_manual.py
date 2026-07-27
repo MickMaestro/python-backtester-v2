@@ -167,6 +167,43 @@ def test_session_warms_up_then_pauses(tab):
     assert tab.manual.lines.is_visible(SL) and tab.manual.lines.is_visible(TP)
 
 
+# --- entry line
+
+def test_entry_line_is_silver():
+    from backtester.ui.chart.order_lines import ENTRY_COLOR
+    assert ENTRY_COLOR.lower() == "#c0c0c0"
+
+
+def test_entry_line_visible_and_follows_price(tab):
+    tab._start()
+    assert tab.manual.lines.is_visible(ENTRY)                 # always shown now
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(tab.manual.last_close)
+    tab._step()                                              # advance a bar
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(tab.manual.last_close)
+
+
+def test_dragging_entry_pins_it(tab):
+    tab._start()
+    parked = tab.manual.last_close + 5.0
+    tab.manual.lines.set_price(ENTRY, parked)
+    tab.manual._on_line_moved(ENTRY)                          # simulate a user drag
+    tab._step()
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(parked)  # stayed put
+
+
+def test_switching_to_pending_keeps_entry_then_market_resumes_follow(tab):
+    tab._start()
+    tab.manual_panel.type_combo.setCurrentText(PENDING)
+    assert tab.manual.lines.is_visible(ENTRY)
+    tab.manual.lines.set_price(ENTRY, tab.manual.last_close + 3.0)
+    tab.manual._on_line_moved(ENTRY)                          # pinned while pending
+
+    tab.manual_panel.type_combo.setCurrentText(MARKET)        # back to market
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(tab.manual.last_close)
+    tab._step()
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(tab.manual.last_close)
+
+
 def test_next_candle_advances_one_bar(tab):
     tab._start()
     before = tab._controller.bars_done

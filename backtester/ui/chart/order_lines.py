@@ -11,7 +11,7 @@ from __future__ import annotations
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Qt, Signal
 
-ENTRY_COLOR = "#42a5f5"
+ENTRY_COLOR = "#c0c0c0"  # silver
 TP_COLOR = "#26a69a"
 SL_COLOR = "#ef5350"
 

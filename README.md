@@ -125,9 +125,10 @@ order-entry panel (*Run Fast* disappears — you're the strategy now). Set
 balance/spread/commission as usual and hit **Start Manual Session**: the replay
 warms up ~100 bars so you have context, then hands over **paused**:
 
-- **Three draggable lines** set the trade: **Entry** (pending orders only),
-  **Take profit**, and **Stop loss**. TP and SL each have a checkbox — a trade
-  needs neither.
+- **Three draggable lines** set the trade: a silver **Entry**, a green **Take
+  profit**, and a red **Stop loss**. TP and SL each have a checkbox — a trade
+  needs neither. The entry line tracks the live price by default; drag it to
+  place it yourself (that pins it), and for a pending order it is the trigger.
 - **Order type** is explicit: *Market* fills at the next bar's open, *Pending*
   places a stop/limit at the entry line (the kind is derived from which side of
   price the line sits).

@@ -40,6 +40,9 @@ class ManualTrader(QObject):
         self._last_close: float | None = None
         self._bar_index = -1
         self._seeded = False
+        # In market mode the entry line tracks live price until the user drags
+        # it; a drag pins it so their adjustment sticks.
+        self._entry_follow = True
 
         panel.buy_clicked.connect(lambda: self.place(Direction.LONG))
         panel.sell_clicked.connect(lambda: self.place(Direction.SHORT))
@@ -47,7 +50,8 @@ class ManualTrader(QObject):
         panel.cancel_clicked.connect(self.cancel_pending)
         panel.settings_changed.connect(self.update_preview)
         panel.lines_toggled.connect(self.sync_line_visibility)
-        self.lines.moved.connect(lambda _key: self.update_preview())
+        panel.type_combo.currentTextChanged.connect(self._on_order_type_changed)
+        self.lines.moved.connect(self._on_line_moved)
         self.lines.move_finished.connect(self._on_line_move_finished)
 
     # ------------------------------------------------------------ lifecycle
@@ -60,6 +64,7 @@ class ManualTrader(QObject):
         self._last_close = None
         self._bar_index = -1
         self._seeded = False
+        self._entry_follow = True
         self.panel.set_enabled(True)
 
     def detach(self) -> None:
@@ -89,6 +94,9 @@ class ManualTrader(QObject):
         self._last_close = last_close
         if not self._seeded:
             self.seed_lines()
+        elif self._entry_follow and not self.panel.is_pending:
+            # Market mode: the entry line follows live price (bars are bid).
+            self.lines.set_price(ENTRY, last_close)
         self.sync()
 
     def seed_lines(self) -> None:
@@ -103,12 +111,20 @@ class ManualTrader(QObject):
         self.sync_line_visibility()
 
     def sync_line_visibility(self) -> None:
-        """Entry only matters for pending orders; TP/SL follow their checkboxes."""
+        """The entry line is always shown; TP/SL follow their checkboxes."""
         if not self._seeded:
             return
-        self.lines.set_visible(ENTRY, self.panel.is_pending)
+        self.lines.set_visible(ENTRY, True)
         self.lines.set_visible(TP, self.panel.use_tp)
         self.lines.set_visible(SL, self.panel.use_sl)
+
+    def _on_order_type_changed(self, _text: str) -> None:
+        """Switching back to Market resumes following live price."""
+        if not self.panel.is_pending and self._seeded and self._last_close is not None:
+            self._entry_follow = True
+            self.lines.set_price(ENTRY, self._last_close)
+        self.sync_line_visibility()
+        self.update_preview()
 
     def sync(self) -> None:
         self._sync_position_state()
@@ -122,9 +138,11 @@ class ManualTrader(QObject):
         return self._broker.positions[0]
 
     def _entry_estimate(self) -> float | None:
-        if self.panel.is_pending:
-            return self.lines.price(ENTRY)
-        return self._last_close  # market fills at the next open ≈ this close
+        # The entry line is the intended price in both modes — the trigger for
+        # a pending order, and the live-tracked price for a market order.
+        if self._last_close is None:
+            return None
+        return self.lines.price(ENTRY)
 
     def _levels(self) -> tuple[float | None, float | None]:
         sl = self.lines.visible_price(SL) if self.panel.use_sl else None
@@ -199,6 +217,12 @@ class ManualTrader(QObject):
             self._broker.cancel_order(self._pending_order)
             self._pending_order = None
             self.sync()
+
+    def _on_line_moved(self, key: str) -> None:
+        if key == ENTRY:
+            # The user is positioning the entry themselves — stop auto-following.
+            self._entry_follow = False
+        self.update_preview()
 
     def _on_line_move_finished(self, key: str) -> None:
         """On release, push new SL/TP to an open position (like a trailing stop)."""
