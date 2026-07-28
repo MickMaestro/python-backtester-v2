@@ -39,6 +39,7 @@ from backtester.strategy.manual import ManualStrategy
 from backtester.ui.chart.chart_widget import BACKGROUND, ChartWidget
 from backtester.ui.chart.replay_controller import ReplayController
 from backtester.ui.chart.trade_markers import TradeLayer
+from backtester.ui.indicators_dialog import load_selection
 from backtester.ui.manual_panel import ManualPanel
 from backtester.ui.manual_trader import ManualTrader
 from backtester.ui.settings import app_settings, cast_like
@@ -87,6 +88,7 @@ class BacktestTab(QWidget):
         self._controller: ReplayController | None = None
         self._fast_worker: FastRunWorker | None = None
         self._backtester: Backtester | None = None
+        self._indicators = load_selection()
         self._param_widgets: dict[str, QWidget] = {}
         self._strategies: dict[str, loader.StrategyEntry] = {}
         self._equity_x: list[int] = []
@@ -270,6 +272,7 @@ class BacktestTab(QWidget):
             self.chart.set_data(
                 self._df, title=(self._loaded_key or "").replace("_", " ")
             )
+            self.apply_indicators()
 
     def _build_replay_side(self) -> QVBoxLayout:
         self.play_button = QPushButton("Play")
@@ -379,6 +382,7 @@ class BacktestTab(QWidget):
         self._clear_run_visuals()
         self._refresh_intrabar_choices()
         self.chart.set_data(self._df, title=key.replace("_", " "))
+        self.apply_indicators()
         self.progress_label.setText(f"{len(self._df):,} bars loaded")
 
     # -------------------------------------------------------------- params
@@ -508,6 +512,7 @@ class BacktestTab(QWidget):
         self._clear_run_visuals()
 
         self.chart.set_data(self._df, title=self._loaded_key.replace("_", " "))
+        self.apply_indicators()
         self.chart.reveal_to(0)
         self.chart.plot.setXRange(0, min(INITIAL_WINDOW, len(self._df)), padding=0.02)
         self.chart.set_follow(self.follow_check.isChecked())
@@ -565,6 +570,7 @@ class BacktestTab(QWidget):
         self.result = result
         self._finish_fast_ui()
         self.chart.set_data(self._df, title=(self._loaded_key or "").replace("_", " "))
+        self.apply_indicators()
         self.trade_layer.load_trades(result.trades)
         self._equity_x = list(range(len(result.equity)))
         self._equity_balance = result.equity["balance"].tolist()
@@ -663,6 +669,18 @@ class BacktestTab(QWidget):
             f"PF {stats['profit_factor']:.2f}, "
             f"max DD {stats['max_drawdown_pct']:.1f}%"
         )
+
+    # --------------------------------------------------------- indicators
+
+    def apply_indicators(self) -> None:
+        """Draw the app-wide indicator selection on the replay chart."""
+        errors = self.chart.set_indicators(self._indicators)
+        if errors:
+            self.setup_note.setText("Indicator errors:\n" + "\n".join(errors))
+
+    def set_indicators(self, indicators: list) -> None:
+        self._indicators = list(indicators)
+        self.apply_indicators()
 
     # ---------------------------------------------------------- trade log
 
@@ -793,6 +811,7 @@ class BacktestTab(QWidget):
         self._clear_run_visuals()
         if self._df is not None:
             self.chart.set_data(self._df, title=(self._loaded_key or "").replace("_", " "))
+            self.apply_indicators()
             self.progress_label.setText(f"{len(self._df):,} bars loaded")
 
     # ------------------------------------------------------------ settings

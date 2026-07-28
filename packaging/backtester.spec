@@ -1,9 +1,9 @@
 # PyInstaller spec — build with:  pyinstaller packaging/backtester.spec
 # Produces dist/PythonBacktester/ (one-folder app; run PythonBacktester.exe).
 #
-# The strategies/ folder is bundled read-only for reference, but the app also
-# loads strategies from a `strategies/` folder next to the executable at
-# runtime, so users can drop in their own .py files without rebuilding.
+# The strategies/ and indicators/ folders are bundled read-only for reference,
+# but the app also loads both from folders next to the executable at runtime,
+# so users can drop in their own .py files without rebuilding.
 
 from pathlib import Path
 
@@ -16,7 +16,10 @@ hiddenimports = (
     + collect_submodules("backtester.strategy.examples")
 )
 
-datas = [(str(project_root / "strategies"), "strategies")]
+datas = [
+    (str(project_root / "strategies"), "strategies"),
+    (str(project_root / "indicators"), "indicators"),
+]
 
 a = Analysis(
     [str(project_root / "app.py")],

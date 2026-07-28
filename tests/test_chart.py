@@ -120,17 +120,26 @@ def test_100k_bars_render_via_grab(qapp):
     assert not chart.grab().isNull()
 
 
-def test_overlay_add_replace_clear(qapp):
+def test_indicators_replace_rather_than_stack(qapp):
+    """Attaching is always a full replacement — see test_indicators_plugin.py
+    for the drawing itself."""
+    from backtester.indicators.base import Indicator, Plot
+
+    class Flat(Indicator):
+        name = "Flat"
+        plots = [Plot("v")]
+
+        def calculate(self, df):
+            return {"v": df["close"].to_numpy(float)}
+
     chart = ChartWidget()
-    df = make_df(200)
-    chart.set_data(df, "TEST")
-    values = df["close"].rolling(20).mean().to_numpy()
-    chart.add_overlay("SMA(20)", values)
-    chart.add_overlay("SMA(20)", values)      # replace, not duplicate
-    chart.add_overlay("EMA(50)", values)
-    assert sorted(chart.overlay_names) == ["EMA(50)", "SMA(20)"]
-    chart.clear_overlays()
-    assert chart.overlay_names == []
+    chart.set_data(make_df(200), "TEST")
+    chart.set_indicators([Flat(), Flat()])
+    assert len(chart.indicators) == 2
+    chart.set_indicators([Flat()])
+    assert len(chart.indicators) == 1
+    chart.clear_indicators()
+    assert chart.indicators == []
 
 
 def test_time_axis_formats(qapp):

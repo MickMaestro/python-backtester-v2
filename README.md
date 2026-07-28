@@ -41,9 +41,8 @@ Pick any dataset from the library in the **Chart** tab and browse it:
   whatever is visible.
 - Crosshair follows the mouse with a time + OHLC + volume readout above the
   chart.
-- Overlay SMA/EMA lines with any period and a chosen **applied price**
-  (*Apply to*: Close, Open, High, Low, Median, Typical, Weighted) — Add /
-  Clear in the toolbar.
+- **Indicators…** loads indicators from the `indicators/` folder onto the
+  chart — see *Chart indicators* below.
 - The X axis is bar-index based, so weekends and session gaps don't leave
   holes in the chart. Zoomed far out, candles switch to a close-price line
   for speed; zoom in and candles return.
@@ -52,6 +51,66 @@ Pick any dataset from the library in the **Chart** tab and browse it:
   separators — vertical lines at day boundaries labelled with the weekday
   (Friday, Tuesday…), on by default, with a configurable colour. Settings are
   saved and shared across every chart in the app.
+
+## Chart indicators
+
+**Indicators…** (Chart tab) lists everything in the **`indicators/`** folder,
+lets you set each one's parameters, and draws it. The selection is app-wide, so
+whatever you load also draws on the Backtest tab's replay chart — clipped to the
+bars revealed so far, so an indicator never runs ahead of the candles.
+
+Eight MetaTrader indicators ship converted, from the `.mq5` sources in
+[`mql5_indicators/`](mql5_indicators/):
+
+| Indicator | What it draws |
+|---|---|
+| **SSL Channel** | LWMA channel of highs/lows; the opposite band trails as a stop, with dots where a line starts |
+| **Chandelier Exit** | Two ATR trailing stops at once (tight and wide), each ratcheting in the trend's favour |
+| **Volty Channel Stop** | ATR envelope around a moving average; the band edge becomes the stop, with a dot per flip |
+| **Gann High/Low Activator** | Averages of the previous bar's high and low as a zone, with the activator line coloured by state |
+| **IBK Candles** | Three MA trend filters; **recolours the candles** blue/grey/violet by the trading direction |
+| **RSI MA Arrows** | RSI of a smoothed price in its own pane (six RSI formulas, Heiken Ashi prices), plus arrows on the candles |
+| **Bid Ratio** | Where the day is closing within its own range, 0–100, in its own pane |
+| **XU ADR Levels** | Fibonacci targets around the day's open, measured in average daily ranges |
+
+Each conversion is a plain, editable Python file with a header saying what it
+came from and what was left out. Terminal-only behaviour — alerts, sounds,
+notifications, chart objects, multi-timeframe `iCustom` calls — has no meaning
+here and is documented as skipped rather than faked.
+
+Writing your own is the same as writing a strategy: drop a `.py` file in
+`indicators/` and hit **Reload** in the dialog.
+
+```python
+from backtester.indicators.base import DrawStyle, Indicator, Pane, Plot
+from backtester.indicators import mql5
+
+class Envelope(Indicator):
+    name = "Envelope"
+    pane = Pane.PRICE                      # or Pane.SEPARATE for its own window
+    params = {"period": 20, "percent": 0.5}
+    plots = [
+        Plot("upper", "Upper", color="#26a69a"),
+        Plot("lower", "Lower", color="#ef5350"),
+    ]
+
+    def calculate(self, df):
+        middle = mql5.sma(self.series(df, "close"), self.p.period)
+        band = middle * self.p.percent / 100.0
+        return {"upper": middle + band, "lower": middle - band}
+```
+
+`calculate` returns one array per plot, aligned to the bars, NaN where the
+value is undefined. Draw styles are `LINE`, `ARROW`, `HISTOGRAM`, `FILL`
+(a shaded band to another plot), `CANDLE_COLOR` (a colour slot per candle) and
+`NONE`. Parameters take ints, floats, bools, or a `Choice` for a dropdown; a
+plot can set `pane=Pane.PRICE` to sit on the candles while the rest of the
+indicator lives in its own window.
+
+[`backtester/indicators/mql5.py`](backtester/indicators/mql5.py) carries the
+MetaTrader maths the conversions share — moving averages in both the terminal's
+and the mladen-family flavours, the full applied-price list including Heiken
+Ashi, ATR, six RSI variants, and the noise filter.
 
 ## Backtest tab (visual replay)
 
@@ -326,10 +385,10 @@ pip install pyinstaller
 pyinstaller packaging/backtester.spec --noconfirm
 ```
 
-The result is `dist/PythonBacktester/`; run `PythonBacktester.exe`. A
-`strategies/` folder is bundled and also read from next to the executable at
-runtime, so end users can drop in their own strategy `.py` files without a
-rebuild. The `data_library/` is created next to the app on first use.
+The result is `dist/PythonBacktester/`; run `PythonBacktester.exe`. The
+`strategies/` and `indicators/` folders are bundled and also read from next to
+the executable at runtime, so end users can drop in their own `.py` files
+without a rebuild. The `data_library/` is created next to the app on first use.
 
 ## Notes
 

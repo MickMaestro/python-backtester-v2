@@ -1,4 +1,4 @@
-"""Candlestick chart widget: crosshair, OHLC readout, indicator overlays.
+"""Candlestick chart widget: crosshair, OHLC readout, indicator plugins.
 
 Pan with left-drag / mouse wheel (X only); Y auto-fits the visible window.
 """
@@ -17,14 +17,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from backtester.indicators.base import Indicator, Pane
+
 from .candlestick_item import CandlestickItem
 from .chart_settings import ChartSettings, ChartSettingsDialog
+from .indicator_layer import IndicatorLayer, IndicatorSet
+from .indicator_pane import IndicatorPane
 from .separators import SeparatorLines, compute_separators
 from .time_axis import TimeAxisItem
 
 BACKGROUND = "#131722"
 CROSSHAIR_PEN = pg.mkPen("#787b86", width=1, style=Qt.PenStyle.DashLine)
-OVERLAY_COLORS = ["#f0a732", "#42a5f5", "#ab47bc", "#26c6da", "#ec407a", "#d4e157"]
 INITIAL_BARS = 300
 #: Small gap kept to the right of the newest candle when following (bars).
 RIGHT_PAD_BARS = 2.0
@@ -43,8 +46,6 @@ class ChartWidget(QWidget):
         super().__init__(parent)
         self._df: pd.DataFrame | None = None
         self._title = ""
-        self._overlays: dict[str, pg.PlotDataItem] = {}
-        self._color_cycle = 0
         self._follow = True
         self._shift = False
         self._settings = ChartSettings.load()
@@ -85,11 +86,15 @@ class ChartWidget(QWidget):
             self.plot.scene().sigMouseMoved, rateLimit=60, slot=self._on_mouse_moved
         )
 
+        self._indicators = IndicatorSet()
+        self._panes: list[IndicatorPane] = []
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addLayout(top)
-        layout.addWidget(self.plot)
+        layout.addWidget(self.plot, stretch=1)
+        self._layout = layout
 
         self.apply_display_settings(self._settings)
 
@@ -99,7 +104,9 @@ class ChartWidget(QWidget):
         """Load a bar frame (canonical schema) and show the most recent bars."""
         self._df = df
         self._title = title
-        self.clear_overlays()
+        # Indicators are computed against a specific frame; the caller
+        # re-attaches them for the new one.
+        self.clear_indicators()
 
         n = len(df)
         self.candles.set_data(
@@ -133,6 +140,7 @@ class ChartWidget(QWidget):
         (keeping its width) so the newest candle stays in view."""
         self.candles.set_visible_length(k)
         self.separators.set_visible_length(k)
+        self._indicators.set_visible_length(k)
         if k <= 0:
             return
         if self._follow:
@@ -142,6 +150,7 @@ class ChartWidget(QWidget):
     def reveal_all(self) -> None:
         self.candles.set_visible_length(None)
         self.separators.set_visible_length(None)
+        self._indicators.set_visible_length(None)
 
     def set_follow(self, on: bool) -> None:
         self._follow = on
@@ -186,6 +195,8 @@ class ChartWidget(QWidget):
             axis.setTextPen(pg.mkPen("#9598a1"))
 
         self.separators.set_style(settings.separators_visible, settings.separator_color)
+        for pane in self._panes:
+            pane.apply_display_settings(settings)
 
     def _open_display_settings(self) -> None:
         result = ChartSettingsDialog.edit(self, self._settings)
@@ -213,34 +224,65 @@ class ChartWidget(QWidget):
             self._follow = False
             self.follow_changed.emit(False)
 
-    # ------------------------------------------------------------ overlays
+    # ---------------------------------------------------------- indicators
 
-    def add_overlay(self, name: str, values: np.ndarray) -> str:
-        """Draw (or replace) a named indicator line; returns its color."""
-        self.remove_overlay(name)
-        color = OVERLAY_COLORS[self._color_cycle % len(OVERLAY_COLORS)]
-        self._color_cycle += 1
-        item = pg.PlotDataItem(
-            x=np.arange(len(values)), y=values,
-            pen=pg.mkPen(color, width=1.5), connect="finite",
-        )
-        self.plot.addItem(item)
-        self._overlays[name] = item
-        return color
+    def set_indicators(self, indicators: list[Indicator]) -> list[str]:
+        """Attach (replacing any existing) indicator plugins to this chart.
 
-    def remove_overlay(self, name: str) -> None:
-        item = self._overlays.pop(name, None)
-        if item is not None:
-            self.plot.removeItem(item)
+        Each is computed against the loaded bar frame; one that raises is
+        skipped and reported rather than taking the whole chart down with it.
+        Returns the errors, so the caller can show them.
+        """
+        self.clear_indicators()
+        if self._df is None:
+            return []
 
-    def clear_overlays(self) -> None:
-        for name in list(self._overlays):
-            self.remove_overlay(name)
-        self._color_cycle = 0
+        errors: list[str] = []
+        for indicator in indicators:
+            try:
+                values = indicator.calculate(self._df)
+            except Exception as exc:
+                errors.append(f"{indicator.label}: {type(exc).__name__}: {exc}")
+                continue
+            self._attach(indicator, values)
+
+        # Newly built panes start at the reveal limit the chart is already at.
+        self._indicators.set_visible_length(self.candles.visible_length)
+        return errors
+
+    def _attach(self, indicator: Indicator, values: dict) -> None:
+        price_plots = [
+            plot for plot in indicator.plots
+            if (plot.pane or indicator.pane) is Pane.PRICE
+        ]
+        pane_plots = [
+            plot for plot in indicator.plots
+            if (plot.pane or indicator.pane) is Pane.SEPARATE
+        ]
+        if price_plots:
+            layer = IndicatorLayer(self.plot.getPlotItem(), candles=self.candles)
+            layer.set_plots(price_plots, values)
+            self._indicators.add(indicator, layer)
+        if pane_plots:
+            pane = IndicatorPane(indicator, self.plot.getPlotItem(), parent=self)
+            pane.apply_display_settings(self._settings)
+            self._layout.addWidget(pane)
+            self._panes.append(pane)
+            layer = IndicatorLayer(pane.plot_item)
+            layer.set_plots(pane_plots, values)
+            self._indicators.add(indicator, layer)
+
+    def clear_indicators(self) -> None:
+        self._indicators.clear()
+        for pane in self._panes:
+            self._layout.removeWidget(pane)
+            pane.setParent(None)
+            pane.deleteLater()
+        self._panes.clear()
 
     @property
-    def overlay_names(self) -> list[str]:
-        return list(self._overlays)
+    def indicators(self) -> list[Indicator]:
+        return self._indicators.indicators
 
     # ----------------------------------------------------------- crosshair
 

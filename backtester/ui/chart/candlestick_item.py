@@ -35,10 +35,29 @@ class CandlestickItem(pg.GraphicsObject):
         self._visible: int | None = None  # replay reveal limit; None = all
         self._up_color = QColor(UP_COLOR)
         self._down_color = QColor(DOWN_COLOR)
+        self._color_index: np.ndarray | None = None   # per-bar colour override
+        self._index_colors: list[QColor] = []
 
     def set_colors(self, up, down) -> None:
         self._up_color = QColor(up)
         self._down_color = QColor(down)
+        self._picture = None
+        self._built = None
+        self.update()
+
+    def set_color_index(self, index, colors) -> None:
+        """Colour each candle by a per-bar index (MQL5's DRAW_COLOR_CANDLES).
+
+        ``index`` holds a colour slot per bar (NaN = leave that candle alone);
+        ``colors`` maps slot → colour. Pass ``None`` to go back to the plain
+        bullish/bearish colouring.
+        """
+        if index is None or len(colors) == 0:
+            self._color_index = None
+            self._index_colors = []
+        else:
+            self._color_index = np.asarray(index, dtype=float)
+            self._index_colors = [QColor(c) for c in colors]
         self._picture = None
         self._built = None
         self.update()
@@ -158,6 +177,23 @@ class CandlestickItem(pg.GraphicsObject):
         o, h, l, c = self._o, self._h, self._l, self._c
         for i in range(i0, i1):
             rising = c[i] >= o[i]
+            override = self._color_at(i)
+            if override is not None:
+                pen = QPen(override)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                brush = QBrush(override)
+                if h[i] > l[i]:
+                    painter.drawLine(QPointF(i, l[i]), QPointF(i, h[i]))
+                top, bottom = (c[i], o[i]) if rising else (o[i], c[i])
+                if top == bottom:
+                    painter.drawLine(QPointF(i - half, top), QPointF(i + half, top))
+                else:
+                    painter.setBrush(brush)
+                    painter.drawRect(
+                        QRectF(i - half, bottom, self._body_width, top - bottom)
+                    )
+                continue
             painter.setPen(up_pen if rising else down_pen)
             if h[i] > l[i]:
                 painter.drawLine(QPointF(i, l[i]), QPointF(i, h[i]))
@@ -167,6 +203,18 @@ class CandlestickItem(pg.GraphicsObject):
             else:
                 painter.setBrush(up_brush if rising else down_brush)
                 painter.drawRect(QRectF(i - half, bottom, self._body_width, top - bottom))
+
+    def _color_at(self, i: int) -> QColor | None:
+        """The per-bar override colour, if an indicator supplied one."""
+        if self._color_index is None or i >= len(self._color_index):
+            return None
+        slot = self._color_index[i]
+        if not np.isfinite(slot):
+            return None
+        slot = int(slot)
+        if 0 <= slot < len(self._index_colors):
+            return self._index_colors[slot]
+        return None
 
     def _draw_polyline(self, painter: QPainter, i0: int, i1: int) -> None:
         stride = max(1, (i1 - i0) // 20_000)

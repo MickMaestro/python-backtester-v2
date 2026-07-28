@@ -37,6 +37,9 @@ class MainWindow(QMainWindow):
         self._charts = [self.backtest_tab.chart, self.chart_tab.chart]
         for chart in self._charts:
             chart.display_settings_changed.connect(self._on_chart_settings_changed)
+        # Indicators are an app-wide selection: what you load in the Chart tab
+        # also draws on the replay.
+        self.chart_tab.indicators_changed.connect(self.backtest_tab.set_indicators)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.data_tab, "Data Manager")

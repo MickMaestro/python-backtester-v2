@@ -6,9 +6,11 @@ the backtest — candles drawing in sequence with trades opening, adjusting, and
 the chart.
 
 > **Status:** Phases 1–7 are complete (this is the **v2** repository — the starting point
-> carries the full v1 codebase forward). Phase 8 below — converting MQL5 custom
-> indicators into Python indicators that draw on the app's charts — is the next block of
-> work: planned, not yet implemented. Work continues one phase at a time, pushed for review.
+> carries the full v1 codebase forward). Phase **8a** is done: indicators are plugins
+> loaded from `indicators/`, and the eight MQL5 indicators in `mql5_indicators/` have been
+> converted by hand against that API. Phase **8b** — the automated `.mq5` importer — is
+> still planned; the hand conversions are what proved the API can hold real indicators.
+> Work continues one phase at a time, pushed for review.
 
 ---
 
@@ -219,11 +221,12 @@ optimizer).
 - *Milestone: manually trade EURUSD candle by candle with risk-based sizing; run an
   MA-cross backtest with an EMA on Typical price and a folder of per-trade context data.*
 
-**Phase 8 — MQL5 indicator conversion** *(planned — see §8 for full design)*
-- **8a. Python indicator plugin system** — indicators become loadable objects (multiple
-  buffers, own chart window, draw styles, inputs) instead of the two hard-wired functions
-  in the Chart tab; a new **Indicators tab** manages them, and they draw on the backtest
-  replay chart too (clipped to revealed bars).
+**Phase 8 — MQL5 indicator conversion** *(8a done; see §8 for full design)*
+- **8a. Python indicator plugin system** ✅ — indicators are loadable objects (multiple
+  series, own chart window, draw styles, inputs) instead of the two hard-wired functions
+  in the Chart tab; an **Indicators…** dialog manages them, and they draw on the backtest
+  replay chart too (clipped to revealed bars). Eight `.mq5` indicators converted by hand
+  against the API, which is what proved it fits real indicators — see §8a.
 - **8b. `.mq5` importer** — pick an MQL5 custom indicator source file and convert it to a
   readable Python indicator file in `indicators/`: `#property` block → plots/window/levels,
   `input`s → parameters, `OnCalculate` → a vectorized/looped `calculate()`. Anything
@@ -391,7 +394,52 @@ several buffers, may live in its own window, draws lines/histograms/arrows in de
 colours, and carries its own inputs. So the plugin model (8a) has to land before the
 converter (8b) has anywhere to put its output.
 
-### 8a. Python indicator plugin system
+### 8a. Python indicator plugin system ✅ *(shipped)*
+
+**What was built**, against the design below:
+
+- `backtester/indicators/` — `base.py` (Indicator, Plot, DrawStyle, Pane, Level, Choice),
+  `loader.py`, and `mql5.py`, the runtime shim carrying the MetaTrader maths the
+  conversions share.
+- Chart side: `ui/chart/indicator_layer.py` (plots on a pane, clipped to revealed bars),
+  `ui/chart/indicator_pane.py` (X-linked sub-windows with levels), per-bar candle
+  recolouring in `CandlestickItem`, and `ChartWidget.set_indicators`.
+- `ui/indicators_dialog.py` + `ui/param_form.py`: pick indicators, set parameters, persist
+  the selection. The Chart tab's hard-wired SMA/EMA controls and the old `add_overlay`
+  API are gone — there is now one way to draw an indicator.
+- **Eight conversions** in `indicators/`, from the sources in `mql5_indicators/`: SSL
+  Channel, Chandelier Exit, Volty Channel Stop, Gann High/Low Activator, IBK Candles,
+  RSI MA Arrows, Bid Ratio, XU ADR Levels.
+
+**What the conversions taught the API** (each of these exists because a real indicator
+needed it):
+
+- **Two MA flavours.** The terminal's `iMA` has a NaN warm-up; the mladen-family
+  `iCustomMa` is defined from the first bar over an expanding window. Substituting one for
+  the other silently shifts every early value, so `mql5.py` provides both and each
+  conversion uses the one its source did.
+- **A plot can override its indicator's pane.** RSI MA Arrows is a separate-window
+  oscillator that also draws arrows on the candles, so `Plot(pane=…)` beats one pane per
+  indicator.
+- **`DrawStyle.CANDLE_COLOR`.** IBK Candles' whole point is `DRAW_COLOR_CANDLES`; the
+  candle item takes a per-bar colour index rather than being limited to bull/bear.
+- **Parameter-dependent plots.** XU ADR Levels draws 19 lines derived from its level
+  count, so `setup()` runs after parameters bind and can build `self.plots`.
+- **`Choice` parameters.** MA method, RSI formula, and applied price are dropdowns, not
+  numbers — the form builder needs a type for that.
+- **Indicators that draw nothing must not raise.** A short frame, a failing calculation,
+  or a saved parameter that no longer exists is reported next to the chart; the other
+  indicators still draw.
+
+**Deliberately not converted** (documented per file rather than faked): alerts, sounds and
+push notifications; chart objects (labels, rectangles, trend-line rays); and multi-
+timeframe `iCustom` paths, since this app charts one dataset at a time. Chandelier Exit
+also drops the source's first-bars look-ahead, where `ArrayMaximum` reads a full window
+past the current bar.
+
+---
+
+*Original design, for reference:*
 
 New package `backtester/indicators/` (the vectorized maths stays in
 `backtester/strategy/indicators.py` — the new package is the *plugin* layer, and the two
