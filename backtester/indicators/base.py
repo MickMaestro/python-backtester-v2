@@ -46,6 +46,7 @@ class DrawStyle(Enum):
     HISTOGRAM = "histogram"      # vertical bars from zero
     FILL = "fill"                # shaded band between this plot and ``fill_with``
     CANDLE_COLOR = "candle_color"  # per-bar colour index applied to the candles
+    CORNER_TEXT = "corner_text"  # the latest value as text in a chart corner
     NONE = "none"                # computed but not drawn
 
 
@@ -62,8 +63,13 @@ class Plot:
     symbol: str = "o"              # ARROW: pyqtgraph symbol ("o", "t", "t1", "d")
     size: int = 8                  # ARROW: marker size
     fill_with: str = ""            # FILL: key of the band's other edge
-    colors: tuple[str, ...] = ()   # CANDLE_COLOR: colour per index value
+    colors: tuple[str, ...] = ()   # CANDLE_COLOR / CORNER_TEXT: colour per slot
+    color_key: str = ""            # series holding the colour slot per bar
     pane: Pane | None = None       # override the indicator's pane
+    #: LINE: label drawn at the start of each unbroken run (per-day levels).
+    #: CORNER_TEXT: a format string, e.g. "Bid Ratio {value:.2f}%".
+    text: str = ""
+    corner: str = "bottom-left"    # CORNER_TEXT: which corner to pin to
 
     def __post_init__(self) -> None:
         if not self.label:

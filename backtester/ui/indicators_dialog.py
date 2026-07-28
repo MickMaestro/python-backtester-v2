@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -137,8 +138,11 @@ class IndicatorsDialog(QDialog):
         self._registry, errors = loader.discover()
         self.available.clear()
         self.available.addItems(sorted(self._registry))
-        if name and self.available.findItems(name, 0):
-            self.available.setCurrentItem(self.available.findItems(name, 0)[0])
+        matches = (
+            self.available.findItems(name, Qt.MatchFlag.MatchExactly) if name else []
+        )
+        if matches:
+            self.available.setCurrentItem(matches[0])
         elif self.available.count():
             self.available.setCurrentRow(0)
         self.error_label.setText("\n".join(errors))

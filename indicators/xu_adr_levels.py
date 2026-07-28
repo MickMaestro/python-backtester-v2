@@ -7,9 +7,12 @@ range and the 5-, 10- and 20-day average ranges. Levels sit at 21.4%, 38.2%,
 with a buy/sell pair at a smaller percentage.
 
 The original draws today's levels as chart objects that get redrawn each day.
-Here every bar carries its own day's levels, so the whole history is visible
-and the levels step at each day boundary. The ADR uses days *before* the
-current one, as the source does, so nothing is lit by hindsight.
+Here every bar carries its own day's levels, so the whole history is visible.
+Each day's levels are a **separate line** — they stop at the day boundary
+rather than joining to the next day's, so the levels sit inside their trading
+day between the period separators — and each one is labelled with its
+percentage. The ADR uses days *before* the current one, as the source does, so
+nothing is lit by hindsight.
 
 Not converted: the on-chart text labels, the per-symbol pip-size table (this
 app already knows each dataset's contract spec), and the auto-refresh timer.
@@ -31,17 +34,21 @@ class XuAdrLevels(Indicator):
 
     def setup(self):
         count = max(0, min(int(self.p.levels), len(LEVELS)))
+        # ``text`` labels each day's segment where it starts, so a level says
+        # what it is without having to hover it.
         self.plots = [
-            Plot("open", "Day open", color="#c8c8c8", width=1.5),
-            Plot("buy", "Buy level", color="#00ffff", width=1.5, dash=True),
-            Plot("sell", "Sell level", color="#ff69b4", width=1.5, dash=True),
+            Plot("open", "Day open", color="#c8c8c8", width=1.5, text="Open"),
+            Plot("buy", "Buy level", color="#00ffff", width=1.5, dash=True, text="Buy"),
+            Plot("sell", "Sell level", color="#ff69b4", width=1.5, dash=True, text="Sell"),
         ]
         for i, percent in enumerate(LEVELS[:count], start=1):
             self.plots.append(
-                Plot(f"up_{i}", f"+{percent:g}%", color="#696969", width=1, dash=True)
+                Plot(f"up_{i}", f"+{percent:g}%", color="#696969", width=1,
+                     dash=True, text=f"{percent:g}%")
             )
             self.plots.append(
-                Plot(f"down_{i}", f"-{percent:g}%", color="#696969", width=1, dash=True)
+                Plot(f"down_{i}", f"-{percent:g}%", color="#696969", width=1,
+                     dash=True, text=f"{percent:g}%")
             )
 
     def calculate(self, df):
@@ -70,7 +77,18 @@ class XuAdrLevels(Indicator):
             distance = adr_per_bar * (percent / 100.0)
             out[f"up_{i}"] = open_per_bar + distance
             out[f"down_{i}"] = open_per_bar - distance
-        return out
+
+        # Break every level at the day boundary so a day's levels are their own
+        # line instead of being joined to the next day's by a vertical jump.
+        last_of_day = np.zeros(len(index), dtype=bool)
+        last_of_day[:-1] = index[:-1] != index[1:]
+        return {key: _break_days(series, last_of_day) for key, series in out.items()}
+
+
+def _break_days(series: np.ndarray, last_of_day: np.ndarray) -> np.ndarray:
+    out = np.asarray(series, dtype=float).copy()
+    out[last_of_day] = np.nan
+    return out
 
 
 def _daily_frame(df) -> dict:

@@ -28,13 +28,25 @@ class VoltyChannelStop(Indicator):
         "offset_factor": 1.0,
         "use_break": False,
         "use_envelopes": False,
+        "show_lines": False,
     }
-    plots = [
-        Plot("up", "Up trend stop", color="#26a69a", width=2),
-        Plot("down", "Down trend stop", color="#ef5350", width=2),
-        Plot("up_signal", "Buy signal", style=DrawStyle.ARROW, color="#00bfff", size=10),
-        Plot("down_signal", "Sell signal", style=DrawStyle.ARROW, color="#db7093", size=10),
-    ]
+
+    def setup(self):
+        # The signal dots are the point of this one; the trailing stop lines
+        # are available but off unless asked for.
+        line_style = DrawStyle.LINE if self.p.show_lines else DrawStyle.NONE
+        self.plots = [
+            Plot("up", "Up trend stop", color="#26a69a", width=2, style=line_style),
+            Plot("down", "Down trend stop", color="#ef5350", width=2, style=line_style),
+            Plot(
+                "up_signal", "Buy signal", style=DrawStyle.ARROW,
+                color="#00bfff", size=10,
+            ),
+            Plot(
+                "down_signal", "Sell signal", style=DrawStyle.ARROW,
+                color="#db7093", size=10,
+            ),
+        ]
 
     def calculate(self, df):
         period = max(int(self.p.ma_period), 1)

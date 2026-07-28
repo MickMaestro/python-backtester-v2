@@ -1,28 +1,31 @@
 """RSI MA Arrows — converted from ``RSI MA Arrows.mq5`` (mladen family).
 
 An RSI of a *smoothed* price — the price is run through a moving average of the
-RSI period first — drawn in its own pane and coloured by state, with a signal
-average over it and arrows on the price chart wherever the state flips.
+RSI period first — that marks the candles wherever its state flips: an arrow
+below the bar when it turns up, above when it turns down.
 
-Everything the original makes optional is kept: six RSI formulas, the full
-applied-price list including Heiken Ashi variants, five averaging methods, and
-three ways to decide the state (level cross, RSI vs its average, or RSI slope).
+The RSI drives the arrows but is **not** drawn: this is an arrows-on-the-chart
+indicator, with no oscillator sub-window. Everything that decides where the
+arrows land is still configurable — six RSI formulas, the full applied-price
+list including Heiken Ashi variants, five averaging methods, and three ways to
+read the state (level cross, RSI against its average, or RSI slope).
 
 Note the ``rsi`` method is this family's own smoothed change/absolute-change
 ratio, not Wilder's classic RSI — the conversion follows the source.
 
-Not converted: the multi-timeframe ``iCustom`` path and the alerts.
+Not converted: the oscillator pane with its signal average and level lines,
+the multi-timeframe ``iCustom`` path, and the alerts.
 """
 
 import numpy as np
 
-from backtester.indicators.base import Choice, DrawStyle, Indicator, Level, Pane, Plot
+from backtester.indicators.base import Choice, DrawStyle, Indicator, Pane, Plot
 from backtester.indicators import mql5
 
 
 class RsiMaArrows(Indicator):
     name = "RSI MA Arrows"
-    pane = Pane.SEPARATE
+    pane = Pane.PRICE
     params = {
         "rsi_period": 16,
         "rsi_method": Choice(
@@ -35,7 +38,6 @@ class RsiMaArrows(Indicator):
         "price": Choice(mql5.PRICE_CHOICES, default="close"),
         "average_period": 9,
         "average_method": Choice(list(mql5.MA_METHODS), default="ema"),
-        "show_average": False,
         "level_up": 60.0,
         "level_down": 40.0,
         "arrows_on": Choice(
@@ -46,35 +48,19 @@ class RsiMaArrows(Indicator):
             },
             default="level",
         ),
-        "show_arrows": True,
         "arrow_gap_upper": 1.0,
         "arrow_gap_lower": 0.5,
     }
-    y_range = (0.0, 100.0)
-
-    def setup(self):
-        self.levels = [
-            Level(float(self.p.level_up)),
-            Level(float(self.p.level_down)),
-        ]
-        self.plots = [
-            Plot("rsi", "RSI", color="#9598a1", width=2),
-            Plot("rsi_up", "RSI up", color="#26a69a", width=2),
-            Plot("rsi_down", "RSI down", color="#ef5350", width=2),
-            Plot(
-                "average", "Signal average", color="#ffffe0", width=1, dash=True,
-                style=DrawStyle.LINE if self.p.show_average else DrawStyle.NONE,
-            ),
-            # The arrows belong on the candles, not in the oscillator pane.
-            Plot(
-                "arrow_up", "Buy arrow", style=DrawStyle.ARROW, color="#00ff00",
-                symbol="t1", size=12, pane=Pane.PRICE,
-            ),
-            Plot(
-                "arrow_down", "Sell arrow", style=DrawStyle.ARROW, color="#ff0000",
-                symbol="t", size=12, pane=Pane.PRICE,
-            ),
-        ]
+    plots = [
+        Plot(
+            "arrow_up", "Buy arrow", style=DrawStyle.ARROW, color="#00ff00",
+            symbol="t1", size=12,
+        ),
+        Plot(
+            "arrow_down", "Sell arrow", style=DrawStyle.ARROW, color="#ff0000",
+            symbol="t", size=12,
+        ),
+    ]
 
     def calculate(self, df):
         rsi_period = max(int(self.p.rsi_period), 1)
@@ -105,17 +91,6 @@ class RsiMaArrows(Indicator):
                         else -1 if rsi[i] < rsi[i - 1] else previous
                     )
 
-        out = {
-            "rsi": rsi,
-            "rsi_up": mql5.segments(rsi, state == 1),
-            "rsi_down": mql5.segments(rsi, state == -1),
-            "average": average,
-            "arrow_up": self.empty(n),
-            "arrow_down": self.empty(n),
-        }
-        if not self.p.show_arrows:
-            return out
-
         # Arrows sit an ATR away from the bar, as the source spaces them.
         high = self.series(df, "high")
         low = self.series(df, "low")
@@ -123,10 +98,15 @@ class RsiMaArrows(Indicator):
         gap = np.where(np.isfinite(gap), gap, 0.0)
         changed = np.zeros(n, dtype=bool)
         changed[1:] = state[1:] != state[:-1]
-        out["arrow_up"] = np.where(
-            changed & (state == 1), low - float(self.p.arrow_gap_lower) * gap, np.nan
-        )
-        out["arrow_down"] = np.where(
-            changed & (state == -1), high + float(self.p.arrow_gap_upper) * gap, np.nan
-        )
-        return out
+        return {
+            "arrow_up": np.where(
+                changed & (state == 1),
+                low - float(self.p.arrow_gap_lower) * gap,
+                np.nan,
+            ),
+            "arrow_down": np.where(
+                changed & (state == -1),
+                high + float(self.p.arrow_gap_upper) * gap,
+                np.nan,
+            ),
+        }

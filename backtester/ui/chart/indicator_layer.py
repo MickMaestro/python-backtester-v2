@@ -15,10 +15,17 @@ from PySide6.QtGui import QColor
 
 from backtester.indicators.base import DrawStyle, Indicator, Plot
 
+from .chart_text import CornerTextItem, SegmentLabelItem
+
 
 def _pen(plot: Plot) -> pg.mkPen:
     style = Qt.PenStyle.DashLine if plot.dash else Qt.PenStyle.SolidLine
     return pg.mkPen(plot.color, width=plot.width, style=style)
+
+
+def _graphics(item) -> tuple:
+    """The drawable objects behind one plot (a fill owns three)."""
+    return item if isinstance(item, tuple) else (item,)
 
 
 class IndicatorLayer:
@@ -27,7 +34,7 @@ class IndicatorLayer:
     def __init__(self, plot_item: pg.PlotItem, candles=None):
         self._plot = plot_item
         self._candles = candles
-        self._items: list = []
+        self._items: list[tuple[Plot, object]] = []
         self._series: dict[str, np.ndarray] = {}
         self._plots: list[Plot] = []
         self._limit: int | None = None
@@ -38,7 +45,9 @@ class IndicatorLayer:
     def set_plots(self, plots: list[Plot], values: dict[str, np.ndarray]) -> None:
         self.clear()
         self._plots = [p for p in plots if p.key in values]
-        self._series = {p.key: np.asarray(values[p.key], dtype=float) for p in self._plots}
+        self._series = {
+            key: np.asarray(series, dtype=float) for key, series in values.items()
+        }
         for plot in self._plots:
             if plot.style is DrawStyle.NONE:
                 continue
@@ -51,6 +60,8 @@ class IndicatorLayer:
                 self._add_scatter(plot)
             elif plot.style is DrawStyle.HISTOGRAM:
                 self._add_histogram(plot)
+            elif plot.style is DrawStyle.CORNER_TEXT:
+                self._add_corner_text(plot)
             else:
                 self._add_line(plot)
         self._refresh()
@@ -60,14 +71,23 @@ class IndicatorLayer:
         self._refresh()
 
     def clear(self) -> None:
-        for item in self._items:
-            self._plot.removeItem(item)
+        # Each entry is (plot, graphics), and a fill's graphics is itself a
+        # tuple — handing the pair straight to removeItem silently does
+        # nothing, which used to leave indicators on the chart after removal.
+        for _plot, item in self._items:
+            for graphic in _graphics(item):
+                self._plot.removeItem(graphic)
         self._items.clear()
         self._plots = []
         self._series = {}
         if self._owns_candle_color and self._candles is not None:
             self._candles.set_color_index(None, ())
         self._owns_candle_color = False
+
+    @property
+    def items(self) -> list:
+        """Every graphics object this layer put on the plot."""
+        return [g for _plot, item in self._items for g in _graphics(item)]
 
     # ----------------------------------------------------------- internals
 
@@ -81,7 +101,12 @@ class IndicatorLayer:
     def _add_line(self, plot: Plot) -> None:
         item = pg.PlotDataItem(pen=_pen(plot), connect="finite")
         self._plot.addItem(item, ignoreBounds=False)
-        self._items.append((plot, item))
+        if plot.text:
+            labels = SegmentLabelItem(plot.text, color=plot.color)
+            self._plot.addItem(labels, ignoreBounds=True)
+            self._items.append((plot, (item, labels)))
+        else:
+            self._items.append((plot, item))
 
     def _add_scatter(self, plot: Plot) -> None:
         item = pg.ScatterPlotItem(
@@ -106,6 +131,11 @@ class IndicatorLayer:
             self._plot.addItem(item, ignoreBounds=True)
         self._items.append((plot, (upper, lower, fill)))
 
+    def _add_corner_text(self, plot: Plot) -> None:
+        item = CornerTextItem(corner=plot.corner)
+        self._plot.addItem(item, ignoreBounds=True)
+        self._items.append((plot, item))
+
     def _refresh(self) -> None:
         for plot, item in self._items:
             x, y = self._clipped(plot.key)
@@ -120,9 +150,33 @@ class IndicatorLayer:
             elif plot.style is DrawStyle.HISTOGRAM:
                 mask = np.isfinite(y)
                 item.setOpts(x=x[mask], height=y[mask], width=0.7)
+            elif plot.style is DrawStyle.CORNER_TEXT:
+                self._refresh_corner_text(plot, item, y)
+            elif isinstance(item, tuple):        # a line with segment labels
+                line, labels = item
+                line.setData(x=x, y=y)
+                labels.set_series(y)
             else:
                 item.setData(x=x, y=y)
         self._refresh_candle_colors()
+
+    def _refresh_corner_text(self, plot: Plot, item: CornerTextItem, y) -> None:
+        """Show the most recent revealed value, formatted by the plot's text."""
+        finite = np.nonzero(np.isfinite(y))[0]
+        if len(finite) == 0:
+            item.set_text("")
+            return
+        last = int(finite[-1])
+        value = float(y[last])
+        template = plot.text or "{value:.2f}"
+        colour = plot.color
+        if plot.colors and plot.color_key:
+            slots = self._series.get(plot.color_key)
+            if slots is not None and last < len(slots) and np.isfinite(slots[last]):
+                slot = int(slots[last])
+                if 0 <= slot < len(plot.colors):
+                    colour = plot.colors[slot]
+        item.set_text(template.format(value=value), colour)
 
     def _refresh_candle_colors(self) -> None:
         if not self._owns_candle_color or self._candles is None:
@@ -159,7 +213,7 @@ class IndicatorSet:
     @property
     def indicators(self) -> list[Indicator]:
         """The attached indicators, once each — one can own several layers
-        (RSI MA Arrows draws an oscillator *and* arrows on the candles)."""
+        (an oscillator that also marks the candles)."""
         seen: dict[int, Indicator] = {}
         for indicator, _layer in self._layers:
             seen.setdefault(id(indicator), indicator)

@@ -230,6 +230,37 @@ def test_loader_reports_a_broken_file_instead_of_raising(tmp_path):
     assert len(errors) == 1 and "bad.py" in errors[0]
 
 
+# -------------------------------------------------------------------- dialog
+
+
+def test_dialog_reload_keeps_the_selection(qapp):
+    """Reload with something selected used to raise: findItems needs a
+    Qt.MatchFlag, not a bare int."""
+    from backtester.ui.indicators_dialog import IndicatorsDialog
+
+    dialog = IndicatorsDialog([])
+    assert dialog.available.count() >= 8
+    dialog.available.setCurrentRow(2)
+    name = dialog.available.currentItem().text()
+    dialog.reload()
+    assert dialog.available.currentItem().text() == name
+
+
+def test_dialog_add_and_remove_round_trip(qapp):
+    from backtester.ui.indicators_dialog import IndicatorsDialog
+
+    dialog = IndicatorsDialog([])
+    dialog.available.setCurrentRow(0)
+    dialog._add()
+    dialog._add()
+    assert dialog.attached.count() == 2
+    dialog.attached.setCurrentRow(0)
+    dialog._remove()
+    assert dialog.attached.count() == 1
+    dialog._clear()
+    assert dialog.attached.count() == 0 and dialog.result_indicators() == []
+
+
 # ------------------------------------------------------------- chart drawing
 
 
@@ -324,6 +355,115 @@ def test_candle_colour_indicator_recolours_the_candles(qapp):
     assert chart.candles._color_at(0).name() == "#111111"
     chart.clear_indicators()
     assert chart.candles._color_index is None
+
+
+def _plotted(chart) -> list:
+    """Every graphics object currently on the price plot."""
+    return list(chart.plot.getPlotItem().items)
+
+
+def test_removing_an_indicator_takes_it_off_the_plot(qapp):
+    """The regression: clearing used to hand (plot, item) pairs to removeItem,
+    which silently does nothing, so lines stayed on the chart until restart."""
+    chart = ChartWidget()
+    chart.set_data(make_df(200), "TEST")
+    before = _plotted(chart)
+
+    chart.set_indicators([Demo()])
+    layer = chart._indicators._layers[0][1]
+    assert layer.items, "nothing was drawn"
+    assert all(item in _plotted(chart) for item in layer.items)
+
+    chart.set_indicators([])
+    assert chart.indicators == []
+    assert _plotted(chart) == before          # back to exactly the bare chart
+
+
+def test_replacing_the_selection_removes_the_old_items(qapp):
+    chart = ChartWidget()
+    chart.set_data(make_df(200), "TEST")
+    chart.set_indicators([Demo()])
+    stale = chart._indicators._layers[0][1].items
+
+    chart.set_indicators([Demo(period=9)])
+    for item in stale:
+        assert item not in _plotted(chart)
+
+
+def test_every_draw_style_is_removed_cleanly(qapp):
+    """Fills own three graphics objects and labelled lines two — both were
+    stored as tuples, which is what broke removal."""
+    class Everything(Indicator):
+        name = "Everything"
+        plots = [
+            Plot("band_top", style=DrawStyle.FILL, fill_with="band_low"),
+            Plot("band_low", style=DrawStyle.NONE),
+            Plot("line", text="tag"),
+            Plot("dots", style=DrawStyle.ARROW),
+            Plot("bars", style=DrawStyle.HISTOGRAM),
+            Plot("readout", style=DrawStyle.CORNER_TEXT, text="{value:.1f}"),
+        ]
+
+        def calculate(self, df):
+            close = df["close"].to_numpy(float)
+            return {
+                "band_top": close + 1, "band_low": close - 1, "line": close,
+                "dots": close, "bars": np.ones(len(df)), "readout": close,
+            }
+
+    chart = ChartWidget()
+    chart.set_data(make_df(120), "TEST")
+    before = _plotted(chart)
+    chart.set_indicators([Everything()])
+    assert len(chart._indicators._layers[0][1].items) == 8   # 3 + 2 + 1 + 1 + 1
+    chart.set_indicators([])
+    assert _plotted(chart) == before
+
+
+def test_corner_text_shows_the_latest_revealed_value(qapp):
+    class Readout(Indicator):
+        name = "Readout"
+        plots = [Plot("v", style=DrawStyle.CORNER_TEXT, text="Value {value:.1f}%")]
+
+        def calculate(self, df):
+            return {"v": np.arange(len(df), dtype=float)}
+
+    chart = ChartWidget()
+    chart.set_data(make_df(100), "TEST")
+    chart.set_indicators([Readout()])
+    item = chart._indicators._layers[0][1].items[0]
+    assert item._text == "Value 99.0%"
+    chart.reveal_to(10)                      # replay: the value follows the bars
+    assert item._text == "Value 9.0%"
+    assert not chart.grab().isNull()
+
+
+def test_corner_text_colour_follows_its_colour_slot(qapp):
+    class Painted(Indicator):
+        name = "Painted"
+        plots = [
+            Plot("v", style=DrawStyle.CORNER_TEXT, text="{value:.0f}",
+                 color_key="slot", colors=("#111111", "#222222")),
+            Plot("slot", style=DrawStyle.NONE),
+        ]
+
+        def calculate(self, df):
+            n = len(df)
+            return {"v": np.zeros(n), "slot": np.ones(n)}
+
+    chart = ChartWidget()
+    chart.set_data(make_df(50), "TEST")
+    chart.set_indicators([Painted()])
+    assert chart._indicators._layers[0][1].items[0]._color.name() == "#222222"
+
+
+def test_segment_labels_anchor_at_each_run(qapp):
+    from backtester.ui.chart.chart_text import SegmentLabelItem
+
+    item = SegmentLabelItem("38.2%")
+    item.set_series(np.array([1.0, 1.0, np.nan, 2.0, 2.0, np.nan, 3.0]))
+    assert item._x.tolist() == [0.0, 3.0, 6.0]      # one label per run
+    assert item._y.tolist() == [1.0, 2.0, 3.0]
 
 
 def test_loading_a_dataset_drops_the_previous_frames_indicators(qapp):
