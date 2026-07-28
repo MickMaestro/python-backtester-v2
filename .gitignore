@@ -15,6 +15,9 @@ data_library/
 # Per-run trade context logs
 trade_logs/
 
+# Saved chart indicator templates (personal setups)
+chart_templates/
+
 # Build artifacts
 build/
 dist/

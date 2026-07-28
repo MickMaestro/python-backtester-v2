@@ -2,7 +2,8 @@
 
 Indicators are discovered from the ``indicators/`` folder on every open, so
 editing a file and reopening this dialog picks up the change. The chosen set is
-persisted (name + parameter values) and applied to every chart in the app.
+persisted (name + parameter values) and applied to every chart in the app, and
+can be saved as a named **template** — see ``indicator_templates.py``.
 """
 
 from __future__ import annotations
@@ -11,14 +12,17 @@ import json
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -26,8 +30,12 @@ from PySide6.QtWidgets import (
 
 from backtester.indicators import loader
 from backtester.indicators.base import Indicator
+from backtester.ui import indicator_templates as templates
 from backtester.ui.param_form import build_form, clear_form, collect_form
 from backtester.ui.settings import app_settings
+
+#: Placeholder row in the template picker — selecting it loads nothing.
+NO_TEMPLATE = "(none)"
 
 
 def load_selection() -> list[Indicator]:
@@ -39,26 +47,13 @@ def load_selection() -> list[Indicator]:
         saved = json.loads(raw)
     except ValueError:
         return []
-
-    registry, _errors = loader.discover()
-    chosen: list[Indicator] = []
-    for entry in saved:
-        item = registry.get(entry.get("name", ""))
-        if item is None:
-            continue
-        try:
-            chosen.append(item[0](**entry.get("params", {})))
-        except (ValueError, TypeError):
-            continue  # the file's parameters changed under a saved selection
+    chosen, _skipped = templates.build(saved)
     return chosen
 
 
 def save_selection(indicators: list[Indicator]) -> None:
     app_settings().setValue(
-        "indicators/selection",
-        json.dumps(
-            [{"name": i.display_name, "params": i.values()} for i in indicators]
-        ),
+        "indicators/selection", json.dumps(templates.to_spec(indicators))
     )
 
 
@@ -123,12 +118,91 @@ class IndicatorsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
+        layout.addLayout(self._build_template_row())
         layout.addLayout(columns, stretch=1)
         layout.addWidget(self.error_label)
         layout.addWidget(buttons)
 
         self.reload()
+        self.refresh_templates()
         self._refresh_attached()
+
+    # ----------------------------------------------------------- templates
+
+    def _build_template_row(self) -> QHBoxLayout:
+        self.template_combo = QComboBox()
+        self.template_combo.setMinimumWidth(180)
+        self.template_combo.setToolTip("Saved indicator sets")
+        load_button = QPushButton("Load")
+        load_button.clicked.connect(self._load_template)
+        save_button = QPushButton("Save as…")
+        save_button.setToolTip("Save what's on the chart as a named template")
+        save_button.clicked.connect(self._save_template)
+        delete_button = QPushButton("Delete")
+        delete_button.clicked.connect(self._delete_template)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Template:"))
+        row.addWidget(self.template_combo)
+        row.addWidget(load_button)
+        row.addWidget(save_button)
+        row.addWidget(delete_button)
+        row.addStretch()
+        return row
+
+    def refresh_templates(self, select: str = "") -> None:
+        current = select or self.template_combo.currentText()
+        self.template_combo.blockSignals(True)
+        self.template_combo.clear()
+        self.template_combo.addItem(NO_TEMPLATE)
+        self.template_combo.addItems(templates.list_templates())
+        index = self.template_combo.findText(current)
+        self.template_combo.setCurrentIndex(max(index, 0))
+        self.template_combo.blockSignals(False)
+
+    def _selected_template(self) -> str:
+        name = self.template_combo.currentText()
+        return "" if name == NO_TEMPLATE else name
+
+    def _load_template(self) -> None:
+        name = self._selected_template()
+        if not name:
+            return
+        chosen, skipped = templates.load_template(name)
+        self._chosen = chosen
+        self._refresh_attached()
+        self.error_label.setText(
+            "" if not skipped else f"{name} — skipped:\n" + "\n".join(skipped)
+        )
+
+    def _save_template(self) -> None:
+        name, accepted = QInputDialog.getText(
+            self, "Save template", "Template name:", text=self._selected_template()
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        if templates.exists(name):
+            confirm = QMessageBox.question(
+                self, "Save template", f"Replace the existing template {name!r}?"
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        templates.save_template(name, self._chosen)
+        self.refresh_templates(select=name)
+        self.error_label.setText("")
+
+    def _delete_template(self) -> None:
+        name = self._selected_template()
+        if not name:
+            return
+        confirm = QMessageBox.question(
+            self, "Delete template", f"Delete the template {name!r}?"
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        templates.delete_template(name)
+        self.refresh_templates(select=NO_TEMPLATE)
 
     # ------------------------------------------------------------ contents
 

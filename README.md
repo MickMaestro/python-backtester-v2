@@ -42,7 +42,8 @@ Pick any dataset from the library in the **Chart** tab and browse it:
 - Crosshair follows the mouse with a time + OHLC + volume readout above the
   chart.
 - **Indicators…** loads indicators from the `indicators/` folder onto the
-  chart — see *Chart indicators* below.
+  chart, and the **Template** picker next to it swaps whole saved sets in one
+  click — see *Chart indicators* below.
 - The X axis is bar-index based, so weekends and session gaps don't leave
   holes in the chart. Zoomed far out, candles switch to a close-price line
   for speed; zoom in and candles return.
@@ -78,8 +79,36 @@ came from and what was left out. Terminal-only behaviour — alerts, sounds,
 notifications, chart objects, multi-timeframe `iCustom` calls — has no meaning
 here and is documented as skipped rather than faked.
 
-Writing your own is the same as writing a strategy: drop a `.py` file in
-`indicators/` and hit **Reload** in the dialog.
+### Templates
+
+A set of indicators with their parameters can be saved as a named **template**
+and swapped in one click — the **Template** picker in the Chart tab toolbar
+applies one immediately, and the *Indicators…* dialog has *Load*, *Save as…*
+and *Delete* for managing them.
+
+Templates are files, not buried settings: `chart_templates/<name>.json` next to
+the app, small enough to read, edit, back up, or hand to someone else.
+
+```json
+{
+  "format": 1,
+  "name": "Trend setup",
+  "saved": "2026-07-28T16:22:00",
+  "indicators": [
+    { "name": "SSL Channel", "params": { "period": 20, "nrtr": true } },
+    { "name": "IBK Candles", "params": { "trend_period": 960, "method": "ema" } }
+  ]
+}
+```
+
+Loading is forgiving: an indicator that has since been renamed or deleted, or a
+parameter that no longer exists, is skipped and named in the message rather
+than failing the whole template.
+
+### Writing your own
+
+Same as writing a strategy: drop a `.py` file in `indicators/` and hit
+**Reload** in the dialog.
 
 ```python
 from backtester.indicators.base import DrawStyle, Indicator, Pane, Plot

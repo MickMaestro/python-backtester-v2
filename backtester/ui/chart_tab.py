@@ -14,8 +14,10 @@ from PySide6.QtWidgets import (
 )
 
 from backtester.data.store import DataStore, StoreError
+from backtester.ui import indicator_templates as templates
 from backtester.ui.chart.chart_widget import ChartWidget
 from backtester.ui.indicators_dialog import (
+    NO_TEMPLATE,
     IndicatorsDialog,
     load_selection,
     save_selection,
@@ -42,6 +44,14 @@ class ChartTab(QWidget):
             "Load indicators from the indicators/ folder onto the charts"
         )
         indicators_button.clicked.connect(self._edit_indicators)
+
+        self.template_combo = QComboBox()
+        self.template_combo.setMinimumWidth(150)
+        self.template_combo.setToolTip(
+            "Apply a saved indicator template (manage them in Indicators…)"
+        )
+        self.template_combo.currentTextChanged.connect(self._apply_template)
+
         self.indicator_label = QLabel("")
         self.indicator_label.setStyleSheet("color: gray;")
 
@@ -50,6 +60,8 @@ class ChartTab(QWidget):
         top.addWidget(self.dataset_combo)
         top.addSpacing(24)
         top.addWidget(indicators_button)
+        top.addWidget(QLabel("Template:"))
+        top.addWidget(self.template_combo)
         top.addWidget(self.indicator_label, stretch=1)
 
         self.chart = ChartWidget()
@@ -58,6 +70,7 @@ class ChartTab(QWidget):
         layout.addLayout(top)
         layout.addWidget(self.chart)
 
+        self.refresh_templates()
         self.refresh_datasets()
 
     # ------------------------------------------------------------ datasets
@@ -113,9 +126,37 @@ class ChartTab(QWidget):
 
     def _edit_indicators(self) -> None:
         result = IndicatorsDialog.edit(self, self._indicators)
+        # The dialog can add or delete templates whether or not it was accepted.
+        self.refresh_templates()
         if result is None:
             return
         self._indicators = result
         save_selection(result)
         self.apply_indicators()
         self.indicators_changed.emit(result)
+
+    # ----------------------------------------------------------- templates
+
+    def refresh_templates(self, select: str = "") -> None:
+        current = select or self.template_combo.currentText()
+        self.template_combo.blockSignals(True)
+        self.template_combo.clear()
+        self.template_combo.addItem(NO_TEMPLATE)
+        self.template_combo.addItems(templates.list_templates())
+        index = self.template_combo.findText(current)
+        self.template_combo.setCurrentIndex(max(index, 0))
+        self.template_combo.blockSignals(False)
+
+    def _apply_template(self, name: str) -> None:
+        """Switch the whole indicator set to a saved template."""
+        if not name or name == NO_TEMPLATE:
+            return
+        chosen, skipped = templates.load_template(name)
+        self._indicators = chosen
+        save_selection(chosen)
+        self.apply_indicators()
+        self.indicators_changed.emit(chosen)
+        if skipped:
+            QMessageBox.warning(
+                self, "Template", f"{name} — skipped:\n" + "\n".join(skipped)
+            )
