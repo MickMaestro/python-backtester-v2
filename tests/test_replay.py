@@ -18,7 +18,7 @@ from backtester.engine.events import (
 )
 from backtester.engine.orders import CloseReason, Direction, Position, Trade
 from backtester.strategy.examples import MaCross
-from backtester.ui.backtest_tab import BacktestTab
+from backtester.ui.backtest_tab import MODE_MANUAL, MODE_STRATEGY, BacktestTab
 from backtester.ui.chart.replay_controller import ReplayController
 from backtester.ui.chart.trade_markers import TradeLayer
 
@@ -81,6 +81,102 @@ def test_fast_forward_completes_in_one_call(qapp):
     assert len(finished[0].trades) == len(bt.broker.trades)
 
 
+def make_rewindable(n=200, fast=5, slow=20):
+    """A controller that can rebuild its run — the rewind precondition."""
+    df = make_wave(n)
+
+    def build():
+        return Backtester(df, MaCross(fast=fast, slow=slow))
+
+    return ReplayController(build(), rebuild=build)
+
+
+def test_rewind_steps_back_one_bar(qapp):
+    controller = make_rewindable()
+    controller.advance(40)
+    assert controller.bars_done == 40
+    controller.rewind()
+    assert controller.bars_done == 39
+
+
+def test_rewind_reproduces_the_state_it_returns_to(qapp):
+    """The rebuilt run must match a fresh run advanced to the same bar."""
+    controller = make_rewindable()
+    controller.advance(80)
+    controller.rewind(30)
+    assert controller.bars_done == 50
+
+    reference = make_rewindable()
+    reference.advance(50)
+
+    rewound, expected = controller.backtester.broker, reference.backtester.broker
+    assert rewound.balance == pytest.approx(expected.balance)
+    assert len(rewound.trades) == len(expected.trades)
+    assert len(rewound.positions) == len(expected.positions)
+    assert [t.exit_index for t in rewound.trades] == [
+        t.exit_index for t in expected.trades
+    ]
+    assert [t.net for t in rewound.trades] == pytest.approx(
+        [t.net for t in expected.trades]
+    )
+
+
+def test_rewind_emits_rewound_before_replaying_kept_bars(qapp):
+    controller = make_rewindable()
+    controller.advance(60)
+    order = []
+    controller.rewound.connect(lambda bar: order.append(("rewound", bar)))
+    controller.events_batch.connect(lambda batch: order.append(("events", len(batch))))
+    controller.rewind(10)
+
+    assert order[0] == ("rewound", 50)
+    assert [kind for kind, _ in order[1:]] == ["events"]
+
+
+def test_rewind_past_the_start_lands_on_bar_zero(qapp):
+    controller = make_rewindable()
+    controller.advance(5)
+    batches = []
+    controller.events_batch.connect(batches.append)
+    controller.rewind(500)
+    assert controller.bars_done == 0
+    assert batches == []  # nothing to replay, so nothing is emitted
+
+
+def test_rewind_reopens_a_finished_run(qapp):
+    controller = make_rewindable(n=120)
+    controller.fast_forward()
+    assert controller.done
+
+    controller.rewind(1)
+    assert not controller.done
+    controller.step()
+    assert controller.bars_done == 120
+
+
+def test_rewind_can_finish_again_after_rewinding(qapp):
+    """A rebuilt run still terminates and reports a result."""
+    controller = make_rewindable(n=120)
+    finished = []
+    controller.fast_forward()
+    controller.finished.connect(finished.append)
+    controller.rewind(20)
+    controller.fast_forward()
+    assert controller.done
+    assert len(finished) == 1
+    assert finished[0].final_balance == pytest.approx(
+        finished[0].initial_balance + sum(t.net for t in finished[0].trades)
+    )
+
+
+def test_rewind_without_a_rebuild_factory_is_a_no_op(qapp):
+    controller, _ = make_controller(n=50)
+    assert not controller.can_rewind
+    controller.advance(20)
+    controller.rewind(5)
+    assert controller.bars_done == 20
+
+
 def make_position(pos_id=1, direction=Direction.LONG, sl=1.09, tp=1.12):
     return Position(
         id=pos_id, direction=direction, lots=1.0, entry_price=1.10,
@@ -136,6 +232,7 @@ def test_backtest_tab_end_to_end(qapp, tmp_path):
         spec={"point": 1e-5, "digits": 5, "contract_size": 100_000.0},
     )
     tab = BacktestTab(store)
+    tab.mode_combo.setCurrentText(MODE_STRATEGY)  # don't inherit the saved mode
     assert tab.dataset_combo.currentText() == "TEST_H1"
     assert tab._df is not None and len(tab._df) == 300
 
@@ -154,3 +251,60 @@ def test_backtest_tab_end_to_end(qapp, tmp_path):
     tab._reset()
     assert tab.trade_layer.closed_count == 0
     assert tab.result is None
+
+
+def make_tab(store_path, n=300, mode=MODE_STRATEGY):
+    """A tab pinned to ``mode`` — the tab otherwise restores the mode saved in
+    the developer's own QSettings, which would decide these tests for them."""
+    store = DataStore(store_path)
+    store.save_bars(
+        "TEST", "H1", make_wave(n),
+        spec={"point": 1e-5, "digits": 5, "contract_size": 100_000.0},
+    )
+    tab = BacktestTab(store)
+    tab.mode_combo.setCurrentText(mode)
+    return tab
+
+
+def test_backtest_tab_rewind_redraws_the_run(qapp, tmp_path):
+    tab = make_tab(tmp_path)
+    tab._start()
+    tab._controller.pause()
+    tab._controller.advance(200)
+    drawn_at_200 = tab.trade_layer.closed_count
+    assert tab.chart.candles.visible_length == 200
+
+    tab._rewind()
+
+    assert tab._controller.bars_done == 199
+    assert tab.chart.candles.visible_length == 199
+    # Visuals were rebuilt from the replayed events, not left stale.
+    assert tab.trade_layer.closed_count <= drawn_at_200
+    assert len(tab._equity_x) == 199
+    assert tab._equity_x == list(range(199))
+    assert tab.rewind_button.isEnabled()
+
+
+def test_backtest_tab_rewind_survives_running_to_the_end_again(qapp, tmp_path):
+    tab = make_tab(tmp_path)
+    tab._start()
+    tab._fast_forward()
+    trades_first_pass = len(tab.result.trades)
+
+    tab._rewind()
+    assert tab.result is None          # the finished result no longer holds
+    assert tab.play_button.isEnabled()
+    tab._fast_forward()
+
+    assert tab.result is not None
+    assert len(tab.result.trades) == trades_first_pass
+    assert tab.trade_layer.closed_count == len(tab.result.trades)
+
+
+def test_rewind_is_unavailable_in_manual_mode(qapp, tmp_path):
+    """A rebuilt run would not contain the trades the user placed by hand."""
+    tab = make_tab(tmp_path, mode=MODE_MANUAL)
+    tab._start()
+    assert tab._controller is not None
+    assert not tab._controller.can_rewind
+    assert not tab.rewind_button.isEnabled()

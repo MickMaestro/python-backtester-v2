@@ -11,6 +11,7 @@ from __future__ import annotations
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -88,6 +89,8 @@ class BacktestTab(QWidget):
         self._controller: ReplayController | None = None
         self._fast_worker: FastRunWorker | None = None
         self._backtester: Backtester | None = None
+        #: Builds a run identical to the current one, from bar 0 (rewind).
+        self._rebuild = None
         self._indicators = load_selection()
         self._param_widgets: dict[str, QWidget] = {}
         self._strategies: dict[str, loader.StrategyEntry] = {}
@@ -278,6 +281,16 @@ class BacktestTab(QWidget):
         self.play_button = QPushButton("Play")
         self.play_button.setFixedWidth(70)
         self.play_button.clicked.connect(self._toggle_play)
+        self.rewind_button = QPushButton("◀  Back")
+        self.rewind_button.setFixedWidth(70)
+        self.rewind_button.setToolTip(
+            "Go back one bar.\n"
+            "The run is rebuilt from the start and replayed to the previous "
+            "bar, so this gets slower the deeper into a run you are.\n"
+            "Not available in manual trading — a rebuilt run would not contain "
+            "the trades you placed."
+        )
+        self.rewind_button.clicked.connect(self._rewind)
         self.step_button = QPushButton("Step")
         self.step_button.setFixedWidth(60)
         self.step_button.clicked.connect(self._step)
@@ -300,11 +313,14 @@ class BacktestTab(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(160)
         self.progress_bar.setVisible(False)
-        for button in (self.play_button, self.step_button, self.ff_button):
+        for button in (
+            self.play_button, self.rewind_button, self.step_button, self.ff_button
+        ):
             button.setEnabled(False)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.play_button)
+        toolbar.addWidget(self.rewind_button)
         toolbar.addWidget(self.step_button)
         toolbar.addWidget(self.ff_button)
         toolbar.addWidget(QLabel("Speed:"))
@@ -431,21 +447,33 @@ class BacktestTab(QWidget):
     # ----------------------------------------------------------------- run
 
     def _make_backtester(self) -> Backtester | None:
+        """Build the run for the current form state.
+
+        Also freezes an identical-run factory in ``self._rebuild``: rewind
+        replays from bar 0 (see ``ReplayController.seek``) and must not pick up
+        edits made to the form mid-replay, or the rewound history would not be
+        the history just watched.
+        """
         if self._df is None or len(self._df) == 0:
             QMessageBox.information(self, "Backtest", "Load a dataset first.")
             return None
         if self.is_manual:
-            strategy = ManualStrategy()  # you place the orders, not a strategy
+            make_strategy = ManualStrategy  # you place the orders, not a strategy
         else:
             strategy_cls = self._strategy_class()
             if strategy_cls is None:
                 QMessageBox.information(self, "Backtest", "Pick a strategy first.")
                 return None
+            params = self._collect_params()
             try:
-                strategy = strategy_cls(**self._collect_params())
+                strategy_cls(**params)  # reject bad params before the run starts
             except ValueError as exc:
                 QMessageBox.warning(self, "Backtest", str(exc))
                 return None
+
+            def make_strategy():
+                return strategy_cls(**params)
+
         config = BacktestConfig(
             initial_balance=self.balance_spin.value(),
             spread_points=(
@@ -455,15 +483,25 @@ class BacktestTab(QWidget):
             instrument=self._instrument(),
         )
         self._save_settings()
-        # Kept so the post-run log can read the strategy's indicator series.
-        self._backtester = Backtester(
-            self._df,
-            strategy,
-            config,
-            intrabar_df=self._intrabar_df(),
-            record_events=self._logging_enabled(),
-        )
-        return self._backtester
+        df, intrabar_df = self._df, self._intrabar_df()
+        record_events = self._logging_enabled()
+
+        def build() -> Backtester:
+            # Kept so the post-run log can read the strategy's indicator series;
+            # a rewind swaps in the rebuilt run, so re-assign on every build.
+            self._backtester = Backtester(
+                df,
+                make_strategy(),
+                config,
+                intrabar_df=intrabar_df,
+                record_events=record_events,
+            )
+            return self._backtester
+
+        # A manual session's trades live only in the broker the GUI pushed them
+        # into — a rebuilt run would silently discard them, so no rewind.
+        self._rebuild = None if self.is_manual else build
+        return build()
 
     def _intrabar_df(self):
         key = self.intrabar_combo.currentText()
@@ -518,10 +556,13 @@ class BacktestTab(QWidget):
         self.chart.set_follow(self.follow_check.isChecked())
         self.chart.set_shift(self.shift_check.isChecked())
 
-        self._controller = ReplayController(backtester, parent=self)
+        self._controller = ReplayController(
+            backtester, parent=self, rebuild=self._rebuild
+        )
         self._controller.events_batch.connect(self._on_events)
         self._controller.progress.connect(self._on_progress)
         self._controller.finished.connect(self._on_finished)
+        self._controller.rewound.connect(self._on_rewound)
         self._controller.state_changed.connect(
             lambda playing: self.play_button.setText("Pause" if playing else "Play")
         )
@@ -529,6 +570,7 @@ class BacktestTab(QWidget):
 
         for button in (self.play_button, self.step_button, self.ff_button):
             button.setEnabled(True)
+        self.rewind_button.setEnabled(self._controller.can_rewind)
         self.badge_label.setText(" ")
 
         if self.is_manual:
@@ -790,6 +832,26 @@ class BacktestTab(QWidget):
             self._controller.pause()
             self._controller.step()
 
+    def _rewind(self) -> None:
+        if self._controller is None:
+            return
+        # Rebuilding re-simulates every bar up to the target, which is not
+        # instant late in a long run — say so rather than looking frozen.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._controller.rewind(1)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _on_rewound(self, bar: int) -> None:
+        """Drop what the replaced run drew; the kept bars are re-emitted next."""
+        self._clear_run_visuals()
+        self.chart.reveal_to(bar)
+        # The run is live again even if it had already finished.
+        for button in (self.play_button, self.step_button, self.ff_button):
+            button.setEnabled(True)
+        self.play_button.setText("Play")
+
     def _fast_forward(self) -> None:
         if self._controller is not None:
             self._controller.fast_forward()
@@ -872,7 +934,9 @@ class BacktestTab(QWidget):
             self._controller.pause()
             self._controller.deleteLater()
             self._controller = None
-        for button in (self.play_button, self.step_button, self.ff_button):
+        for button in (
+            self.play_button, self.rewind_button, self.step_button, self.ff_button
+        ):
             button.setEnabled(False)
         self.play_button.setText("Play")
 

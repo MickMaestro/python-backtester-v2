@@ -5,9 +5,16 @@ bar's terminating ``EquityEvent``. A QTimer ticks ~30x/sec and advances
 ``speed`` bars per second (fractional speeds accumulate); every tick emits a
 single ``events_batch`` so the chart repaints once regardless of how many
 bars advanced.
+
+Going *backwards* works differently: the stream is a one-shot generator and
+the broker and strategy carry state forward, so there is nothing to un-step.
+``seek`` instead builds a fresh run from the ``rebuild`` factory and replays
+into it — exact, because the engine is deterministic.
 """
 
 from __future__ import annotations
+
+from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -22,20 +29,37 @@ class ReplayController(QObject):
     progress = Signal(int, int)          # bars done, total
     finished = Signal(object)            # BacktestResult
     state_changed = Signal(bool)         # playing?
+    rewound = Signal(int)                # bar the run was rebuilt back to
 
-    def __init__(self, backtester: Backtester, parent: QObject | None = None):
+    def __init__(
+        self,
+        backtester: Backtester,
+        parent: QObject | None = None,
+        rebuild: Callable[[], Backtester] | None = None,
+    ):
+        """``rebuild``: builds a run identical to ``backtester``, from bar 0.
+
+        Supplying it enables ``seek``/``rewind``. It must capture the setup as
+        it was when the replay started, so a rewind reproduces the history just
+        watched rather than picking up edits made to the form mid-run.
+        """
         super().__init__(parent)
+        self._rebuild = rebuild
+        self._speed = 10.0               # bars per second
+        self._timer = QTimer(self)
+        self._timer.setInterval(TICK_MS)
+        self._timer.timeout.connect(self._on_tick)
+        self._adopt(backtester)
+
+    def _adopt(self, backtester: Backtester) -> None:
+        """Point the controller at a run sitting at bar 0."""
         self._bt = backtester
         self._gen = backtester.run()
         self._total = len(backtester.df)
         self._bars_done = 0
         self._carry = 0.0
-        self._speed = 10.0               # bars per second
         self._done = False
         self._finished_sent = False
-        self._timer = QTimer(self)
-        self._timer.setInterval(TICK_MS)
-        self._timer.timeout.connect(self._on_tick)
 
     # ------------------------------------------------------------ controls
 
@@ -72,6 +96,30 @@ class ReplayController(QObject):
         while not self._done:
             self._advance(max(1, self._total))
 
+    def rewind(self, bars: int = 1) -> None:
+        """Go back ``bars`` bars (usable while paused, playing, or finished)."""
+        self.seek(self._bars_done - max(1, bars))
+
+    def seek(self, bar: int) -> None:
+        """Rebuild the run and replay it up to ``bar``.
+
+        Emits ``rewound`` once the old run has been dropped and before the
+        kept bars are re-emitted, so listeners can clear what the replaced run
+        drew. Costs a re-simulation of everything up to ``bar``, so it gets
+        slower the deeper into a run you are — there is no cheaper way to
+        recover state the generator has already passed.
+        """
+        if self._rebuild is None:
+            return
+        target = max(0, min(int(bar), self._total))
+        self.pause()
+        self._adopt(self._rebuild())
+        self.rewound.emit(target)
+        if target > 0:
+            self._advance(target)
+        else:
+            self.progress.emit(0, self._total)
+
     def set_speed(self, bars_per_second: float) -> None:
         self._speed = max(0.1, float(bars_per_second))
 
@@ -82,6 +130,16 @@ class ReplayController(QObject):
     @property
     def playing(self) -> bool:
         return self._timer.isActive()
+
+    @property
+    def can_rewind(self) -> bool:
+        """Whether this replay was given a way to rebuild itself."""
+        return self._rebuild is not None
+
+    @property
+    def backtester(self) -> Backtester:
+        """The live run — replaced by ``seek``, so don't hold a reference."""
+        return self._bt
 
     @property
     def done(self) -> bool:
