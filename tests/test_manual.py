@@ -204,6 +204,69 @@ def test_switching_to_pending_keeps_entry_then_market_resumes_follow(tab):
     assert tab.manual.lines.price(ENTRY) == pytest.approx(tab.manual.last_close)
 
 
+def drag(tab, key, price):
+    """Move a line the way a mouse drag does (signals fire)."""
+    tab.manual.lines._lines[key].setPos(price)
+
+
+def bracket_gaps(tab):
+    lines = tab.manual.lines
+    entry = lines.price(ENTRY)
+    return lines.price(TP) - entry, entry - lines.price(SL)
+
+
+def test_tp_sl_follow_entry_line_with_price(tab):
+    arm(tab)
+    gaps = bracket_gaps(tab)
+    for _ in range(5):
+        tab._step()
+    assert bracket_gaps(tab) == pytest.approx(gaps)
+
+
+def test_dragging_entry_carries_tp_and_sl(tab):
+    arm(tab)
+    gaps = bracket_gaps(tab)
+    drag(tab, ENTRY, tab.manual.last_close + 0.02)
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(tab.manual.last_close + 0.02)
+    assert bracket_gaps(tab) == pytest.approx(gaps)
+
+
+def test_dragging_tp_or_sl_moves_only_that_line(tab):
+    arm(tab)
+    entry = tab.manual.lines.price(ENTRY)
+    tp = tab.manual.lines.price(TP)
+    drag(tab, SL, entry - 0.01)
+    assert tab.manual.lines.price(SL) == pytest.approx(entry - 0.01)
+    assert tab.manual.lines.price(ENTRY) == pytest.approx(entry)
+    assert tab.manual.lines.price(TP) == pytest.approx(tp)
+
+
+def test_open_position_levels_stay_put_as_entry_moves(tab):
+    price = arm(tab)
+    tab.manual.place(Direction.LONG)
+    tab._step()                                    # fills at this bar's open
+    position = tab.manual.position()
+    assert position is not None
+    for _ in range(3):
+        tab._step()
+    drag(tab, ENTRY, price + 0.05)
+    assert tab.manual.lines.price(SL) == pytest.approx(position.sl)
+    assert tab.manual.lines.price(TP) == pytest.approx(position.tp)
+
+
+def test_pending_order_levels_stay_put_as_entry_moves(tab):
+    price = arm(tab)
+    tab.manual_panel.type_combo.setCurrentText(PENDING)
+    tab.manual.lines.set_price(ENTRY, price + 0.01)
+    tab.manual.lines.set_price(TP, price + 0.02)
+    tab.manual.place(Direction.LONG)
+    assert tab.manual.broker.pending
+    sl, tp = tab.manual.lines.price(SL), tab.manual.lines.price(TP)
+    drag(tab, ENTRY, price + 0.03)
+    assert tab.manual.lines.price(SL) == pytest.approx(sl)
+    assert tab.manual.lines.price(TP) == pytest.approx(tp)
+
+
 def test_next_candle_advances_one_bar(tab):
     tab._start()
     before = tab._controller.bars_done

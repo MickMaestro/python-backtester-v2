@@ -92,12 +92,15 @@ class ManualTrader(QObject):
     def on_bars_advanced(self, bar_index: int, last_close: float) -> None:
         self._bar_index = bar_index
         self._last_close = last_close
+        # Refresh position/order state first so TP/SL only ride along with the
+        # entry line while nothing live owns them.
+        self._sync_position_state()
         if not self._seeded:
             self.seed_lines()
         elif self._entry_follow and not self.panel.is_pending:
             # Market mode: the entry line follows live price (bars are bid).
-            self.lines.set_price(ENTRY, last_close)
-        self.sync()
+            self.lines.move_entry(last_close)
+        self.update_preview()
 
     def seed_lines(self) -> None:
         """Place the lines around price, spaced by recent volatility."""
@@ -122,7 +125,7 @@ class ManualTrader(QObject):
         """Switching back to Market resumes following live price."""
         if not self.panel.is_pending and self._seeded and self._last_close is not None:
             self._entry_follow = True
-            self.lines.set_price(ENTRY, self._last_close)
+            self.lines.move_entry(self._last_close)
         self.sync_line_visibility()
         self.update_preview()
 
@@ -246,6 +249,7 @@ class ManualTrader(QObject):
         if not pending_live:
             self._pending_order = None
         self.panel.set_pending_open(pending_live)
+        self.lines.brackets_follow_entry = position is None and not pending_live
         if position is not None:
             if position.sl is not None:
                 self.lines.set_price(SL, position.sl)
