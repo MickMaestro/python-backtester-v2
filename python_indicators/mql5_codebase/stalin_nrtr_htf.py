@@ -1,0 +1,169 @@
+"""Stalin_NRTR_HTF — converted from MQL5: MQL5 Indicators/Stalin_NRTR_HTF/Stalin_NRTR_HTF.mq5
+
+Stalin_NRTR с возможностью изменения таймфрейма во входных параметрах
+Copyright: Copyright © 2018, Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 1.60
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+
+MQL5_META = {'props': {'copyright': 'Copyright © 2018, Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '1.60', 'window': 'chart', 'indicator_buffers': 6, 'indicator_plots': 6}, 'types': {1: 1, 2: 1, 3: 5, 4: 5, 5: 5, 6: 5}, 'colors': {1: [65280], 2: [16711935], 3: [3329330], 4: [9639167], 5: [3329330], 6: [9639167]}, 'widths': {1: 2, 2: 2, 3: 2, 4: 2, 5: 5, 6: 5}, 'styles': {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}, 'labels': {1: 'NRTR Line Up', 2: 'NRTR Line Down', 3: 'NRTR Up', 4: 'NRTR Down', 5: 'Buy BykovTrend signal', 6: 'Sell BykovTrend signal'}, 'levels': [], 'description': ['Stalin_NRTR с возможностью изменения таймфрейма во входных параметрах'], 'name': 'Stalin_NRTR_HTF', 'source': 'MQL5 Indicators/Stalin_NRTR_HTF/Stalin_NRTR_HTF.mq5', 'folder': 'Stalin_NRTR_HTF', 'inputs': [{'mql': 'TimeFrame', 'py': 'TimeFrame', 'param': 'TimeFrame', 'type': 'int', 'default': 16388, 'label': 'Период графика индикатора (таймфрейм)', 'sinput': False}, {'mql': 'MAMethod', 'py': 'MAMethod', 'param': 'MAMethod', 'type': 'int', 'default': 1, 'label': '', 'sinput': False}, {'mql': 'MAShift', 'py': 'MAShift', 'param': 'MAShift', 'type': 'int', 'default': 0, 'label': '', 'sinput': False}, {'mql': 'Fast', 'py': 'Fast', 'param': 'Fast', 'type': 'int', 'default': 14, 'label': '', 'sinput': False}, {'mql': 'Slow', 'py': 'Slow', 'param': 'Slow', 'type': 'int', 'default': 21, 'label': '', 'sinput': False}, {'mql': 'RSI', 'py': 'RSI', 'param': 'RSI', 'type': 'int', 'default': 17, 'label': '', 'sinput': False}, {'mql': 'Confirm', 'py': 'Confirm', 'param': 'Confirm', 'type': 'int', 'default': 0, 'label': '', 'sinput': False}, {'mql': 'Flat', 'py': 'Flat', 'param': 'Flat', 'type': 'int', 'default': 0, 'label': '', 'sinput': False}, {'mql': 'AtrRatio', 'py': 'AtrRatio', 'param': 'AtrRatio', 'type': 'double', 'default': 0.375, 'label': '', 'sinput': False}, {'mql': 'SoundAlert', 'py': 'SoundAlert', 'param': 'SoundAlert', 'type': 'bool', 'default': False, 'label': '', 'sinput': False}, {'mql': 'EmailAlert', 'py': 'EmailAlert', 'param': 'EmailAlert', 'type': 'bool', 'default': False, 'label': '', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': []}
+
+# ---- inputs and global variables
+TimeFrame = _input('TimeFrame', PERIOD_H4)  # Период графика индикатора (таймфрейм)
+MAMethod = _input('MAMethod', MODE_EMA)
+MAShift = _input('MAShift', 0)
+Fast = _input('Fast', 14)
+Slow = _input('Slow', 21)
+RSI = _input('RSI', 17)
+Confirm = _input('Confirm', _int(0.0))
+Flat = _input('Flat', _int(0.0))
+AtrRatio = _input('AtrRatio', 0.375)
+SoundAlert = _input('SoundAlert', False)
+EmailAlert = _input('EmailAlert', False)
+IndBuffer1 = Arr(0, 0.0)
+IndBuffer2 = Arr(0, 0.0)
+IndBuffer3 = Arr(0, 0.0)
+IndBuffer4 = Arr(0, 0.0)
+IndBuffer5 = Arr(0, 0.0)
+IndBuffer6 = Arr(0, 0.0)
+min_rates_total = 0
+Ind_Handle = 0
+
+def GetStringTimeframe(timeframe):
+    return StringSubstr(EnumToString(timeframe, 'ENUM_TIMEFRAMES'), 7, -1)
+
+def OnInit():
+    global Ind_Handle, min_rates_total
+    min_rates_total = 2
+    Ind_Handle = iCustom(Symbol(), TimeFrame, 'Stalin_NRTR', MAMethod, MAShift, Fast, Slow, RSI, Confirm, Flat, SoundAlert, EmailAlert)
+    if Ind_Handle == INVALID_HANDLE:
+        Print(' Не удалось получить хендл индикатора Stalin_NRTR')
+        return INIT_FAILED
+    IndInit(0, IndBuffer1, INDICATOR_DATA)
+    IndInit(1, IndBuffer2, INDICATOR_DATA)
+    IndInit(2, IndBuffer3, INDICATOR_DATA)
+    IndInit(3, IndBuffer4, INDICATOR_DATA)
+    IndInit(4, IndBuffer5, INDICATOR_DATA)
+    IndInit(5, IndBuffer6, INDICATOR_DATA)
+    PlotInit(0, 0.0, 0, 0)
+    PlotInit(1, 0.0, 0, 0)
+    PlotInit(2, 0.0, 0, 0)
+    PlotInit(3, 0.0, 0, 0)
+    PlotInit(4, 0.0, 0, 0)
+    PlotInit(5, 0.0, 0, 0)
+    PlotIndexSetInteger(4, PLOT_ARROW, 171)
+    PlotIndexSetInteger(5, PLOT_ARROW, 171)
+    shortname = Box("")
+    StringConcatenate(shortname, 'Stalin_NRTR', '(', GetStringTimeframe(TimeFrame), ')')
+    IndicatorSetString(INDICATOR_SHORTNAME, shortname.v)
+    IndicatorSetInteger(INDICATOR_DIGITS, Digits())
+    return INIT_SUCCEEDED
+
+def OnDeinit(reason):
+    Comment('')
+    ChartRedraw(0)
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    if not TimeFramesCheck('Stalin_NRTR', TimeFrame):
+        return 0
+    if rates_total < min_rates_total:
+        return 0
+    if BarsCalculated(Ind_Handle) < Bars(Symbol(), TimeFrame):
+        return prev_calculated
+    ArraySetAsSeries(time, True)
+    if not CountIndicator(0, "", TimeFrame, Ind_Handle, 0, IndBuffer1, 1, IndBuffer2, 2, IndBuffer3, 3, IndBuffer4, 4, IndBuffer5, 5, IndBuffer6, time, rates_total, prev_calculated, min_rates_total):
+        return 0
+    return rates_total
+
+def IndInit(Number, Buffer, Type):
+    SetIndexBuffer(Number, Buffer, Type)
+    ArraySetAsSeries(Buffer, True)
+
+def PlotInit(Number, Empty_Value, Draw_Begin, nShift):
+    PlotIndexSetInteger(Number, PLOT_DRAW_BEGIN, Draw_Begin)
+    PlotIndexSetDouble(Number, PLOT_EMPTY_VALUE, Empty_Value)
+    PlotIndexSetInteger(Number, PLOT_SHIFT, nShift)
+
+def CountIndicator(Numb, Symb, TFrame, IndHandle, BuffNumb1, IndBuf1, BuffNumb2, IndBuf2, BuffNumb3, IndBuf3, BuffNumb4, IndBuf4, BuffNumb5, IndBuf5, BuffNumb6, IndBuf6, nTime, Rates_Total, Prev_Calculated, Min_Rates_Total):
+    IndTime = Arr(1, 0, dyn=False)
+    limit = 0
+    if Prev_Calculated > Rates_Total or Prev_Calculated <= 0:
+        limit = Rates_Total - Min_Rates_Total - 1
+        _s_CountIndicator_LastCountBar[Numb] = limit
+    else:
+        limit = _s_CountIndicator_LastCountBar[Numb] + Rates_Total - Prev_Calculated
+    for bar in range(limit, 0 - 1, -1):
+        if CopyTime(Symbol(), TFrame, _DT(nTime[bar]), 1, IndTime) <= 0:
+            return (0 != 0)
+        if nTime[bar] >= IndTime[0] and nTime[bar + 1] < IndTime[0]:
+            _s_CountIndicator_LastCountBar[Numb] = bar
+            Arr1 = Arr(1, 0.0, dyn=False)
+            Arr2 = Arr(1, 0.0, dyn=False)
+            Arr3 = Arr(1, 0.0, dyn=False)
+            Arr4 = Arr(1, 0.0, dyn=False)
+            Arr5 = Arr(1, 0.0, dyn=False)
+            Arr6 = Arr(1, 0.0, dyn=False)
+            if CopyBuffer(IndHandle, BuffNumb1, _DT(nTime[bar]), 1, Arr1) <= 0:
+                return (0 != 0)
+            if CopyBuffer(IndHandle, BuffNumb2, _DT(nTime[bar]), 1, Arr2) <= 0:
+                return (0 != 0)
+            if CopyBuffer(IndHandle, BuffNumb3, _DT(nTime[bar]), 1, Arr3) <= 0:
+                return (0 != 0)
+            if CopyBuffer(IndHandle, BuffNumb4, _DT(nTime[bar]), 1, Arr4) <= 0:
+                return (0 != 0)
+            if CopyBuffer(IndHandle, BuffNumb5, _DT(nTime[bar]), 1, Arr5) <= 0:
+                return (0 != 0)
+            if CopyBuffer(IndHandle, BuffNumb6, _DT(nTime[bar]), 1, Arr6) <= 0:
+                return (0 != 0)
+            IndBuf1[bar] = Arr1[0]
+            IndBuf2[bar] = Arr2[0]
+            IndBuf3[bar] = Arr3[0]
+            IndBuf4[bar] = Arr4[0]
+            IndBuf5[bar] = Arr5[0]
+            IndBuf6[bar] = Arr6[0]
+        else:
+            IndBuf1[bar] = IndBuf1[bar + 1]
+            IndBuf2[bar] = IndBuf2[bar + 1]
+            IndBuf3[bar] = IndBuf3[bar + 1]
+            IndBuf4[bar] = IndBuf4[bar + 1]
+            IndBuf5[bar] = IndBuf5[bar + 1]
+            IndBuf6[bar] = IndBuf6[bar + 1]
+    return True
+
+def TimeFramesCheck(IndName, TFrame):
+    if TFrame < Period() and TFrame != PERIOD_CURRENT:
+        Comment('Период графика для индикатора ' + IndName + ' не может быть меньше периода текущего графика! \n Следует изменить входные параметры индикатора!')
+        return (0 != 0)
+    return True
+
+# ---- static local variables
+_s_CountIndicator_LastCountBar = Arr(1, 0, dyn=False)
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class StalinNRTRHTF(_MQL5Indicator):
+    name = 'Stalin_NRTR_HTF'
+    pane = _Pane.PRICE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'TimeFrame': _Choice({0: 'CURRENT', 1: 'M1', 2: 'M2', 3: 'M3', 4: 'M4', 5: 'M5', 6: 'M6', 10: 'M10', 12: 'M12', 15: 'M15', 20: 'M20', 30: 'M30', 16385: 'H1', 16386: 'H2', 16387: 'H3', 16388: 'H4', 16390: 'H6', 16392: 'H8', 16396: 'H12', 16408: 'D1', 32769: 'W1', 49153: 'MN1'}, default=16388),  # Период графика индикатора (таймфрейм)
+        'MAMethod': _Choice({0: 'Sma', 1: 'Ema', 2: 'Smma', 3: 'Lwma'}, default=1),
+        'MAShift': 0,
+        'Fast': 14,
+        'Slow': 21,
+        'RSI': 17,
+        'Confirm': 0,
+        'Flat': 0,
+        'AtrRatio': 0.375,
+        'SoundAlert': False,
+        'EmailAlert': False,
+    }
+

@@ -1,0 +1,283 @@
+"""XWPR_Histogram_Vol_Direct_Alerts — converted from MQL5: MQL5 Indicators/XWPR_Histogram_Vol_Direct_Alerts/XWPR_Histogram_Vol_Direct_Alerts.mq5
+
+Copyright: 2013,   Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 3.24
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+from backtester.mql5.lib.smoothalgorithms import *  # #include SmoothAlgorithms.mqh
+
+MQL5_META = {'props': {'copyright': '2013,   Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '3.24', 'window': 'separate', 'indicator_buffers': 8, 'indicator_plots': 6}, 'types': {1: 1, 2: 1, 3: 10, 4: 1, 5: 1, 6: 12}, 'colors': {1: [16760576], 2: [16711680], 3: [65280, 8421376, 14381203, 2763429, 42495], 4: [16711680], 5: [16760576], 6: [16748574, 9639167]}, 'widths': {1: 1, 2: 1, 3: 2, 4: 1, 5: 1, 6: 1}, 'styles': {1: 4, 2: 4, 3: 0, 4: 4, 5: 4}, 'labels': {1: 'WPR_Histogram_Vol Max', 2: 'WPR_Histogram_Vol Res', 3: 'WPR_Histogram_Vol', 4: 'WPR_Histogram_Vol Supr', 5: 'WPR_Histogram_Vol Min', 6: 'XWPR_Histogram_Vol_Direct'}, 'levels': [], 'description': [], 'name': 'XWPR_Histogram_Vol_Direct_Alerts', 'source': 'MQL5 Indicators/XWPR_Histogram_Vol_Direct_Alerts/XWPR_Histogram_Vol_Direct_Alerts.mq5', 'folder': 'XWPR_Histogram_Vol_Direct_Alerts', 'inputs': [{'mql': 'WPRPeriod', 'py': 'WPRPeriod', 'param': 'WPRPeriod', 'type': 'uint', 'default': 14, 'label': 'период индикатора', 'sinput': False}, {'mql': 'VolumeType', 'py': 'VolumeType', 'param': 'VolumeType', 'type': 'int', 'default': 0, 'label': 'объём', 'sinput': False}, {'mql': 'HighLevel2', 'py': 'HighLevel2', 'param': 'HighLevel2', 'type': 'int', 'default': 20, 'label': 'уровень перекупленности 2', 'sinput': False}, {'mql': 'HighLevel1', 'py': 'HighLevel1', 'param': 'HighLevel1', 'type': 'int', 'default': 15, 'label': 'уровень перекупленности 1', 'sinput': False}, {'mql': 'LowLevel1', 'py': 'LowLevel1', 'param': 'LowLevel1', 'type': 'int', 'default': -15, 'label': 'уровень перепроданности 1', 'sinput': False}, {'mql': 'LowLevel2', 'py': 'LowLevel2', 'param': 'LowLevel2', 'type': 'int', 'default': -20, 'label': 'уровень перепроданности 2', 'sinput': False}, {'mql': 'MA_SMethod', 'py': 'MA_SMethod', 'param': 'MA_SMethod', 'type': 'int', 'default': 0, 'label': 'Метод усреднения', 'sinput': False}, {'mql': 'MA_Length', 'py': 'MA_Length', 'param': 'MA_Length', 'type': 'uint', 'default': 12, 'label': 'Глубина сглаживания', 'sinput': False}, {'mql': 'MA_Phase', 'py': 'MA_Phase', 'param': 'MA_Phase', 'type': 'int', 'default': 15, 'label': 'параметр первого сглаживания,', 'sinput': False}, {'mql': 'Shift', 'py': 'Shift', 'param': 'Shift', 'type': 'int', 'default': 0, 'label': 'Сдвиг индикатора по горизонтали в барах', 'sinput': False}, {'mql': 'NumberofBar', 'py': 'NumberofBar', 'param': 'NumberofBar', 'type': 'uint', 'default': 1, 'label': 'Номер бара для подачи сигнала', 'sinput': False}, {'mql': 'SoundON', 'py': 'SoundON', 'param': 'SoundON', 'type': 'bool', 'default': True, 'label': 'Разрешение алерта', 'sinput': False}, {'mql': 'NumberofAlerts', 'py': 'NumberofAlerts', 'param': 'NumberofAlerts', 'type': 'uint', 'default': 2, 'label': 'Количество алертов', 'sinput': False}, {'mql': 'EMailON', 'py': 'EMailON', 'param': 'EMailON', 'type': 'bool', 'default': False, 'label': 'Разрешение почтовой отправки сигнала', 'sinput': False}, {'mql': 'PushON', 'py': 'PushON', 'param': 'PushON', 'type': 'bool', 'default': False, 'label': 'Разрешение отправки сигнала на мобильный', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': ['SmoothAlgorithms.mqh']}
+
+# ---- inputs and global variables
+WPRPeriod = _input('WPRPeriod', 14)  # период индикатора
+VolumeType = _input('VolumeType', VOLUME_TICK)  # объём
+HighLevel2 = _input('HighLevel2', 20)  # уровень перекупленности 2
+HighLevel1 = _input('HighLevel1', 15)  # уровень перекупленности 1
+LowLevel1 = _input('LowLevel1', -15)  # уровень перепроданности 1
+LowLevel2 = _input('LowLevel2', -20)  # уровень перепроданности 2
+MA_SMethod = _input('MA_SMethod', MODE_SMA_)  # Метод усреднения
+MA_Length = _input('MA_Length', 12)  # Глубина сглаживания
+MA_Phase = _input('MA_Phase', 15)  # параметр первого сглаживания,
+Shift = _input('Shift', 0)  # Сдвиг индикатора по горизонтали в барах
+NumberofBar = _input('NumberofBar', 1)  # Номер бара для подачи сигнала
+SoundON = _input('SoundON', True)  # Разрешение алерта
+NumberofAlerts = _input('NumberofAlerts', 2)  # Количество алертов
+EMailON = _input('EMailON', False)  # Разрешение почтовой отправки сигнала
+PushON = _input('PushON', False)  # Разрешение отправки сигнала на мобильный
+IndBuffer = Arr(0, 0.0)
+ColorIndBuffer = Arr(0, 0.0)
+UpIndBuffer = Arr(0, 0.0)
+DnIndBuffer = Arr(0, 0.0)
+MaxIndBuffer = Arr(0, 0.0)
+MinIndBuffer = Arr(0, 0.0)
+DirectBuffer = Arr(0, 0.0)
+ColorDirectBuffer = Arr(0, 0.0)
+WPR_Handle = 0
+min_rates_total = 0
+min_rates_1 = 0
+
+def OnInit():
+    global WPR_Handle, min_rates_1, min_rates_total
+    min_rates_1 = _int(WPRPeriod)
+    min_rates_total = min_rates_1 + GetStartBars(MA_SMethod, MA_Length, MA_Phase)
+    WPR_Handle = iWPR(None, 0, WPRPeriod)
+    if WPR_Handle == INVALID_HANDLE:
+        Print(' Не удалось получить хендл индикатора iWPR')
+        return INIT_FAILED
+    SetIndexBuffer(0, MaxIndBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(0, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(0, PLOT_SHOW_DATA, False)
+    ArraySetAsSeries(MaxIndBuffer, True)
+    SetIndexBuffer(1, UpIndBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(1, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(1, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(1, PLOT_SHOW_DATA, False)
+    ArraySetAsSeries(UpIndBuffer, True)
+    SetIndexBuffer(2, IndBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(2, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(2, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(2, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(2, PLOT_SHOW_DATA, False)
+    ArraySetAsSeries(IndBuffer, True)
+    SetIndexBuffer(3, ColorIndBuffer, INDICATOR_COLOR_INDEX)
+    ArraySetAsSeries(ColorIndBuffer, True)
+    SetIndexBuffer(4, DnIndBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(3, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(3, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(3, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(3, PLOT_SHOW_DATA, False)
+    ArraySetAsSeries(DnIndBuffer, True)
+    SetIndexBuffer(5, MinIndBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(4, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(4, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(4, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(4, PLOT_SHOW_DATA, False)
+    ArraySetAsSeries(MinIndBuffer, True)
+    SetIndexBuffer(6, DirectBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(5, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(5, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(5, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(5, PLOT_SHOW_DATA, False)
+    PlotIndexSetInteger(5, PLOT_ARROW, 171)
+    ArraySetAsSeries(DirectBuffer, True)
+    SetIndexBuffer(7, ColorDirectBuffer, INDICATOR_COLOR_INDEX)
+    ArraySetAsSeries(ColorDirectBuffer, True)
+    IndicatorSetString(INDICATOR_SHORTNAME, 'XWPR_Histogram_Vol_Direct_Alerts(' + _str(WPRPeriod) + ')')
+    IndicatorSetInteger(INDICATOR_DIGITS, 0)
+    return INIT_SUCCEEDED
+
+def OnCalculate(rates_total, prev_calculated, Time, Open, High, Low, Close, Tick_Volume, Volume, Spread):
+    if BarsCalculated(WPR_Handle) < rates_total or rates_total < min_rates_total:
+        return 0
+    to_copy = 0
+    limit = 0
+    bar = 0
+    maxbar = 0
+    vol = 0.0
+    xvol = 0.0
+    maxbar = rates_total - min_rates_1 - 1
+    if prev_calculated > rates_total or prev_calculated <= 0:
+        limit = maxbar
+    else:
+        limit = rates_total - prev_calculated
+    to_copy = limit + 1
+    if VolumeType == VOLUME_TICK:
+        ArraySetAsSeries(Tick_Volume, True)
+    else:
+        ArraySetAsSeries(Volume, True)
+    if CopyBuffer(WPR_Handle, 0, 0, to_copy, IndBuffer) <= 0:
+        return 0
+    bar = limit
+    for bar in range(bar, 0 - 1, -1):
+        IndBuffer[bar] += 50
+        if VolumeType == VOLUME_TICK:
+            vol = float(Tick_Volume[bar])
+        else:
+            vol = float(Volume[bar])
+        IndBuffer[bar] *= vol
+        IndBuffer[bar] = XMA1.XMASeries(maxbar, prev_calculated, rates_total, MA_SMethod, MA_Phase, MA_Length, IndBuffer[bar], bar, True)
+        DirectBuffer[bar] = IndBuffer[bar]
+        xvol = XMA2.XMASeries(maxbar, prev_calculated, rates_total, MA_SMethod, MA_Phase, MA_Length, vol, bar, True)
+        MaxIndBuffer[bar] = HighLevel2 * xvol
+        UpIndBuffer[bar] = HighLevel1 * xvol
+        DnIndBuffer[bar] = LowLevel1 * xvol
+        MinIndBuffer[bar] = LowLevel2 * xvol
+        clr = _int(2.0)
+        if IndBuffer[bar] > MaxIndBuffer[bar]:
+            clr = _int(0.0)
+        elif IndBuffer[bar] > UpIndBuffer[bar]:
+            clr = _int(1.0)
+        elif IndBuffer[bar] < MinIndBuffer[bar]:
+            clr = _int(4.0)
+        elif IndBuffer[bar] < DnIndBuffer[bar]:
+            clr = _int(3.0)
+        ColorIndBuffer[bar] = clr
+        if IndBuffer[bar] > IndBuffer[bar + 1]:
+            clr = _int(0.0)
+        elif IndBuffer[bar] < IndBuffer[bar + 1]:
+            clr = _int(1.0)
+        else:
+            clr = _int(ColorDirectBuffer[bar + 1])
+        ColorDirectBuffer[bar] = clr
+    else:
+        bar = _range_end(bar, 0 - 1, -1)
+    BuySignal('XWPR_Histogram_Vol_Direct_Alerts', rates_total, prev_calculated, Close, Spread)
+    SellSignal('XXWPR_Histogram_Vol_Direct_Alerts', rates_total, prev_calculated, Close, Spread)
+    return rates_total
+
+def BuySignal(SignalSirname, Rates_total, Prev_calculated, Close, Spread):
+    global _s_BuySignal_counter
+    if Rates_total != Prev_calculated:
+        _s_BuySignal_counter = 0
+    SignalText = ''
+    BuySignal_ = False
+    index = _int(NumberofBar)
+    index1 = _int(NumberofBar) + 1
+    if IndBuffer[index1] <= 0 and IndBuffer[index] > 0:
+        BuySignal_ = True
+        SignalText = SignalText + 'Пробой нуля! '
+    if ColorDirectBuffer[index1] != 0 and ColorDirectBuffer[index] == 0:
+        BuySignal_ = True
+        SignalText = SignalText + 'Изменение направления движения гистограммы! '
+    if ColorIndBuffer[index1] > 1 and ColorIndBuffer[index] == 1:
+        BuySignal_ = True
+        SignalText = SignalText + 'Пробой уровня перекупленности 1! '
+    if ColorIndBuffer[index1] > 0 and ColorIndBuffer[index] == 0:
+        BuySignal_ = True
+        SignalText = SignalText + 'Пробой уровня перекупленности 2! '
+    if ColorIndBuffer[index1] == 3 and ColorIndBuffer[index] < 3:
+        BuySignal_ = True
+        SignalText = SignalText + 'Выход из зоны перепроданности 1! '
+    if ColorIndBuffer[index1] == 4 and ColorIndBuffer[index] < 4:
+        BuySignal_ = True
+        SignalText = SignalText + 'Выход из зоны перепроданности 2! '
+    if BuySignal_ and _s_BuySignal_counter <= NumberofAlerts:
+        _s_BuySignal_counter += 1
+        tm = MqlDateTime()
+        TimeToStruct(TimeCurrent(), tm)
+        text = TimeToString(TimeCurrent(), TIME_DATE) + ' ' + _str(tm.hour) + ':' + _str(tm.min)
+        Ask = Close[index]
+        Bid = Close[index]
+        Bid += Spread[index] * Point()
+        sAsk = DoubleToString(Ask, Digits())
+        sBid = DoubleToString(Bid, Digits())
+        sPeriod = GetStringTimeframe(ChartPeriod())
+        if SoundON:
+            Alert('BUY signal ' + SignalText + '\n Ask=', Ask, '\n Bid=', Bid, '\n currtime=', text, '\n Symbol=', Symbol(), ' Period=', sPeriod)
+        if EMailON:
+            SendMail(SignalSirname + ': BUY signal ' + SignalText, ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+        if PushON:
+            SendNotification(SignalSirname + ': BUY signal ' + SignalText + ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+
+def SellSignal(SignalSirname, Rates_total, Prev_calculated, Close, Spread):
+    global _s_SellSignal_counter
+    if Rates_total != Prev_calculated:
+        _s_SellSignal_counter = 0
+    SignalText = ''
+    SellSignal_ = False
+    index = _int(NumberofBar)
+    index1 = _int(NumberofBar) + 1
+    if IndBuffer[index1] >= 0 and IndBuffer[index] < 0:
+        SellSignal_ = True
+        SignalText = SignalText + 'Пробой нуля! '
+    if ColorDirectBuffer[index1] != 1 and ColorDirectBuffer[index] == 1:
+        SellSignal_ = True
+        SignalText = SignalText + 'Изменение направления движения гистограммы! '
+    if ColorIndBuffer[index1] < 3 and ColorIndBuffer[index] == 3:
+        SellSignal_ = True
+        SignalText = SignalText + 'Пробой уровня пепроданности 1! '
+    if ColorIndBuffer[index1] < 4 and ColorIndBuffer[index] == 4:
+        SellSignal_ = True
+        SignalText = SignalText + 'Пробой уровня пепроданности 2! '
+    if ColorIndBuffer[index1] == 1 and ColorIndBuffer[index] > 1:
+        SellSignal_ = True
+        SignalText = SignalText + 'Выход из зоны перекупленности 1! '
+    if ColorIndBuffer[index1] == 0 and ColorIndBuffer[index] > 0:
+        SellSignal_ = True
+        SignalText = SignalText + 'Выход из зоны перекупленности 2! '
+    if SellSignal_ and _s_SellSignal_counter <= NumberofAlerts:
+        _s_SellSignal_counter += 1
+        tm = MqlDateTime()
+        TimeToStruct(TimeCurrent(), tm)
+        text = TimeToString(TimeCurrent(), TIME_DATE) + ' ' + _str(tm.hour) + ':' + _str(tm.min)
+        Ask = Close[index]
+        Bid = Close[index]
+        Bid += Spread[index] * Point()
+        sAsk = DoubleToString(Ask, Digits())
+        sBid = DoubleToString(Bid, Digits())
+        sPeriod = GetStringTimeframe(ChartPeriod())
+        if SoundON:
+            Alert('SELL signal ' + SignalText + '\n Ask=', Ask, '\n Bid=', Bid, '\n currtime=', text, '\n Symbol=', Symbol(), ' Period=', sPeriod)
+        if EMailON:
+            SendMail(SignalSirname + ': SELL signal ' + SignalText, ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+        if PushON:
+            SendNotification(SignalSirname + ': SELL signal ' + SignalText + ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+
+def GetStringTimeframe(timeframe):
+    return StringSubstr(EnumToString(timeframe, 'ENUM_TIMEFRAMES'), 7, -1)
+
+# ---- global variables initialised from expressions
+XMA1 = _alloc(CXMA)
+XMA1.__init__()
+XMA2 = _alloc(CXMA)
+XMA2.__init__()
+
+# ---- static local variables
+_s_BuySignal_counter = 0
+_s_SellSignal_counter = 0
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class XWPRHistogramVolDirectAlerts(_MQL5Indicator):
+    name = 'XWPR_Histogram_Vol_Direct_Alerts'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'WPRPeriod': 14,  # период индикатора
+        'VolumeType': _Choice({0: 'Tick', 1: 'Real'}, default=0),  # объём
+        'HighLevel2': 20,  # уровень перекупленности 2
+        'HighLevel1': 15,  # уровень перекупленности 1
+        'LowLevel1': -15,  # уровень перепроданности 1
+        'LowLevel2': -20,  # уровень перепроданности 2
+        'MA_SMethod': _Choice({0: 'SMA', 1: 'EMA', 2: 'SMMA', 3: 'LWMA', 4: 'JJMA', 5: 'JurX', 6: 'ParMA', 7: 'T3', 8: 'VIDYA', 9: 'AMA'}, default=0),  # Метод усреднения
+        'MA_Length': 12,  # Глубина сглаживания
+        'MA_Phase': 15,  # параметр первого сглаживания,
+        'Shift': 0,  # Сдвиг индикатора по горизонтали в барах
+        'NumberofBar': 1,  # Номер бара для подачи сигнала
+        'SoundON': True,  # Разрешение алерта
+        'NumberofAlerts': 2,  # Количество алертов
+        'EMailON': False,  # Разрешение почтовой отправки сигнала
+        'PushON': False,  # Разрешение отправки сигнала на мобильный
+    }
+

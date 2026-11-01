@@ -1,0 +1,232 @@
+"""xrsx_bb — converted from MQL5: MQL5 Indicators/XRSX/xrsx_bb.mq5
+
+Relative Strength Index
+Copyright: 2013,   Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 3.24
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+from backtester.mql5.lib.smoothalgorithms import *  # #include SmoothAlgorithms.mqh
+
+MQL5_META = {'props': {'copyright': '2013,   Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '3.24', 'window': 'separate', 'indicator_buffers': 9, 'indicator_plots': 7}, 'types': {1: 10, 2: 8, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}, 'colors': {1: [8421504, 32768, 16711680, 255, 16711935], 2: [8421504, 65280, 36095], 3: [16711680], 4: [255], 5: [8421504], 6: [255], 7: [16711680]}, 'widths': {1: 3, 2: 2, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}, 'styles': {1: 0, 2: 1, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4}, 'labels': {1: 'XRSX', 2: 'Signal line', 3: '+2Sigma', 4: '+Sigma', 5: 'Middle', 6: '-Sigma', 7: '-2Sigma'}, 'levels': [], 'description': ['Relative Strength Index'], 'name': 'xrsx_bb', 'source': 'MQL5 Indicators/XRSX/xrsx_bb.mq5', 'folder': 'XRSX', 'inputs': [{'mql': 'DSmoothMethod', 'py': 'DSmoothMethod', 'param': 'DSmoothMethod', 'type': 'int', 'default': 5, 'label': 'Price smoothing method', 'sinput': False}, {'mql': 'DPeriod', 'py': 'DPeriod', 'param': 'DPeriod', 'type': 'int', 'default': 15, 'label': 'Moving average period', 'sinput': False}, {'mql': 'DPhase', 'py': 'DPhase', 'param': 'DPhase', 'type': 'int', 'default': 100, 'label': 'Moving average smoothing parameter', 'sinput': False}, {'mql': 'SSmoothMethod', 'py': 'SSmoothMethod', 'param': 'SSmoothMethod', 'type': 'int', 'default': 4, 'label': 'Signal line smoothing method', 'sinput': False}, {'mql': 'SPeriod', 'py': 'SPeriod', 'param': 'SPeriod', 'type': 'int', 'default': 7, 'label': 'Signal line period', 'sinput': False}, {'mql': 'SPhase', 'py': 'SPhase', 'param': 'SPhase', 'type': 'int', 'default': 100, 'label': 'Signal line parameter', 'sinput': False}, {'mql': 'IPC', 'py': 'IPC', 'param': 'IPC', 'type': 'int', 'default': 1, 'label': 'Price constant', 'sinput': False}, {'mql': 'Shift', 'py': 'Shift', 'param': 'Shift', 'type': 'int', 'default': 0, 'label': 'Horizontal shift of the indicator in bars', 'sinput': False}, {'mql': 'Style', 'py': 'Style', 'param': 'Style', 'type': 'int', 'default': 10, 'label': 'XRSX display style', 'sinput': False}, {'mql': 'BBPeriod', 'py': 'BBPeriod', 'param': 'BBPeriod', 'type': 'int', 'default': 100, 'label': 'The period for Bollinger levels', 'sinput': False}, {'mql': 'BBDeviation1', 'py': 'BBDeviation1', 'param': 'BBDeviation1', 'type': 'double', 'default': 1.0, 'label': 'Small deviation', 'sinput': False}, {'mql': 'BBDeviation2', 'py': 'BBDeviation2', 'param': 'BBDeviation2', 'type': 'double', 'default': 1.6, 'label': 'Big deviation', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': ['SmoothAlgorithms.mqh']}
+
+# enum Applied_price_
+PRICE_CLOSE_ = 1
+PRICE_OPEN_ = 2
+PRICE_HIGH_ = 3
+PRICE_LOW_ = 4
+PRICE_MEDIAN_ = 5
+PRICE_TYPICAL_ = 6
+PRICE_WEIGHTED_ = 7
+PRICE_SIMPLE_ = 8
+PRICE_QUARTER_ = 9
+PRICE_TRENDFOLLOW0_ = 10
+PRICE_TRENDFOLLOW1_ = 11
+_enum('Applied_price_', {1: 'PRICE_CLOSE_', 2: 'PRICE_OPEN_', 3: 'PRICE_HIGH_', 4: 'PRICE_LOW_', 5: 'PRICE_MEDIAN_', 6: 'PRICE_TYPICAL_', 7: 'PRICE_WEIGHTED_', 8: 'PRICE_SIMPLE_', 9: 'PRICE_QUARTER_', 10: 'PRICE_TRENDFOLLOW0_', 11: 'PRICE_TRENDFOLLOW1_'})
+
+# enum IndStyle
+COLOR_LINE = 8
+COLOR_HISTOGRAM = 10
+COLOR_ARROW = 12
+_enum('IndStyle', {8: 'COLOR_LINE', 10: 'COLOR_HISTOGRAM', 12: 'COLOR_ARROW'})
+
+# ---- inputs and global variables
+DSmoothMethod = _input('DSmoothMethod', MODE_JurX)  # Price smoothing method
+DPeriod = _input('DPeriod', 15)  # Moving average period
+DPhase = _input('DPhase', 100)  # Moving average smoothing parameter
+SSmoothMethod = _input('SSmoothMethod', MODE_JJMA)  # Signal line smoothing method
+SPeriod = _input('SPeriod', 7)  # Signal line period
+SPhase = _input('SPhase', 100)  # Signal line parameter
+IPC = _input('IPC', PRICE_CLOSE)  # Price constant
+Shift = _input('Shift', 0)  # Horizontal shift of the indicator in bars
+Style = _input('Style', COLOR_HISTOGRAM)  # XRSX display style
+BBPeriod = _input('BBPeriod', 100)  # The period for Bollinger levels
+BBDeviation1 = _input('BBDeviation1', 1.0)  # Small deviation
+BBDeviation2 = _input('BBDeviation2', 1.6)  # Big deviation
+XRSX = Arr(0, 0.0)
+XXRSX = Arr(0, 0.0)
+ColorXRSX = Arr(0, 0.0)
+ColorXXRSX = Arr(0, 0.0)
+ExtLineBuffer1 = Arr(0, 0.0)
+ExtLineBuffer2 = Arr(0, 0.0)
+ExtLineBuffer3 = Arr(0, 0.0)
+ExtLineBuffer4 = Arr(0, 0.0)
+ExtLineBuffer5 = Arr(0, 0.0)
+quotient = 0.0
+StartBars = 0
+StartBarsD = 0
+StartBarsS = 0
+StartBarsB = 0
+
+def OnInit():
+    global StartBars, StartBarsB, StartBarsD, StartBarsS, quotient
+    StartBarsD = UPXRSX.GetStartBars(DSmoothMethod, DPeriod, DPhase) + 1
+    StartBarsS = StartBarsD + UPXRSX.GetStartBars(SSmoothMethod, SPeriod, SPhase)
+    StartBarsB = StartBarsD + BBPeriod
+    StartBars = MathMax(StartBarsS, StartBarsB)
+    UPXRSX.XMALengthCheck('DPeriod', DPeriod)
+    UPXRSX.XMALengthCheck('SPeriod', SPeriod)
+    UPXRSX.XMAPhaseCheck('DPhase', DPhase, DSmoothMethod)
+    UPXRSX.XMAPhaseCheck('SPhase', SPhase, SSmoothMethod)
+    quotient = BBDeviation2 / BBDeviation1
+    SetIndexBuffer(0, XRSX, INDICATOR_DATA)
+    PlotIndexSetInteger(0, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, StartBarsD + 1)
+    PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(0, PLOT_DRAW_TYPE, Style)
+    SetIndexBuffer(1, ColorXRSX, INDICATOR_COLOR_INDEX)
+    PlotIndexSetInteger(1, PLOT_DRAW_BEGIN, StartBarsD + 1)
+    SetIndexBuffer(2, XXRSX, INDICATOR_DATA)
+    PlotIndexSetInteger(2, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(2, PLOT_DRAW_BEGIN, StartBarsS + 1)
+    PlotIndexSetDouble(2, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    SetIndexBuffer(3, ColorXXRSX, INDICATOR_COLOR_INDEX)
+    PlotIndexSetInteger(3, PLOT_DRAW_BEGIN, StartBarsS + 1)
+    SetIndexBuffer(4, ExtLineBuffer1, INDICATOR_DATA)
+    SetIndexBuffer(5, ExtLineBuffer2, INDICATOR_DATA)
+    SetIndexBuffer(6, ExtLineBuffer3, INDICATOR_DATA)
+    SetIndexBuffer(7, ExtLineBuffer4, INDICATOR_DATA)
+    SetIndexBuffer(8, ExtLineBuffer5, INDICATOR_DATA)
+    PlotIndexSetInteger(4, PLOT_DRAW_BEGIN, StartBarsB)
+    PlotIndexSetInteger(5, PLOT_DRAW_BEGIN, StartBarsB)
+    PlotIndexSetInteger(6, PLOT_DRAW_BEGIN, StartBarsB)
+    PlotIndexSetInteger(7, PLOT_DRAW_BEGIN, StartBarsB)
+    PlotIndexSetInteger(8, PLOT_DRAW_BEGIN, StartBarsB)
+    PlotIndexSetDouble(4, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetDouble(5, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetDouble(6, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetDouble(7, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetDouble(8, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    shortname = Box("")
+    Smooth = ""
+    Smooth = UPXRSX.GetString_MA_Method(DSmoothMethod)
+    StringConcatenate(shortname, 'Relative Strength Index(', _str(DPeriod), ',', Smooth, ')')
+    IndicatorSetString(INDICATOR_SHORTNAME, shortname.v)
+    IndicatorSetInteger(INDICATOR_DIGITS, 0)
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    if rates_total < StartBars:
+        return 0
+    dprice_ = 0.0
+    absdprice_ = 0.0
+    up_xrsx = 0.0
+    dn_xrsx = 0.0
+    xrsx = 0.0
+    xxrsx = 0.0
+    xma = 0.0
+    stdev1 = 0.0
+    stdev2 = 0.0
+    first1 = 0
+    first2 = 0
+    first3 = 0
+    bar = 0
+    if prev_calculated > rates_total or prev_calculated <= 0:
+        first1 = 1
+        first2 = StartBarsD + 1
+        first3 = StartBarsS + 1
+    else:
+        first1 = prev_calculated - 1
+        first2 = first1
+        first3 = first1
+    bar = first1
+    for bar in range(bar, rates_total):
+        dprice_ = PriceSeries(IPC, bar, open, low, high, close) - PriceSeries(IPC, bar - 1, open, low, high, close)
+        absdprice_ = MathAbs(dprice_)
+        up_xrsx = UPXRSX.XMASeries(1, prev_calculated, rates_total, DSmoothMethod, DPhase, DPeriod, dprice_, bar, False)
+        dn_xrsx = DNXRSX.XMASeries(1, prev_calculated, rates_total, DSmoothMethod, DPhase, DPeriod, absdprice_, bar, False)
+        if dn_xrsx == 0:
+            xrsx = EMPTY_VALUE
+        else:
+            xrsx = _fdiv(up_xrsx, dn_xrsx)
+            if xrsx > 1:
+                xrsx = 1.0
+            if xrsx < -1:
+                xrsx = -1.0
+        XRSX[bar] = xrsx * 100
+        xxrsx = XSIGN.XMASeries(StartBarsD, prev_calculated, rates_total, SSmoothMethod, SPhase, SPeriod, XRSX[bar], bar, False)
+        XXRSX[bar] = xxrsx
+        xma = XMA.XMASeries(StartBarsD + 1, prev_calculated, rates_total, MODE_SMA_, 0, BBPeriod, XRSX[bar], bar, False)
+        stdev1 = STD.StdDevSeries(StartBarsB, prev_calculated, rates_total, BBPeriod, BBDeviation1, XRSX[bar], xma, bar, False)
+        stdev2 = stdev1 * quotient
+        if bar <= (StartBarsB + BBPeriod):
+            xma = EMPTY_VALUE
+            stdev1 = 0.0
+            stdev2 = 0.0
+        ExtLineBuffer1[bar] = xma + stdev2
+        ExtLineBuffer2[bar] = xma + stdev1
+        ExtLineBuffer3[bar] = xma
+        ExtLineBuffer4[bar] = xma - stdev1
+        ExtLineBuffer5[bar] = xma - stdev2
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    bar = first3
+    for bar in range(bar, rates_total):
+        pass
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    bar = first2
+    for bar in range(bar, rates_total):
+        ColorXRSX[bar] = 0.0
+        if XRSX[bar] > 0:
+            if XRSX[bar] > XRSX[bar - 1]:
+                ColorXRSX[bar] = 1.0
+            if XRSX[bar] < XRSX[bar - 1]:
+                ColorXRSX[bar] = 2.0
+        if XRSX[bar] < 0:
+            if XRSX[bar] < XRSX[bar - 1]:
+                ColorXRSX[bar] = 3.0
+            if XRSX[bar] > XRSX[bar - 1]:
+                ColorXRSX[bar] = 4.0
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    bar = first3
+    for bar in range(bar, rates_total):
+        ColorXXRSX[bar] = 0.0
+        if XRSX[bar] > XXRSX[bar - 1]:
+            ColorXXRSX[bar] = 1.0
+        if XRSX[bar] < XXRSX[bar - 1]:
+            ColorXXRSX[bar] = 2.0
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    return rates_total
+
+# ---- global variables initialised from expressions
+UPXRSX = _alloc(CXMA)
+UPXRSX.__init__()
+DNXRSX = _alloc(CXMA)
+DNXRSX.__init__()
+XSIGN = _alloc(CXMA)
+XSIGN.__init__()
+XMA = _alloc(CXMA)
+XMA.__init__()
+STD = _alloc(CStdDeviation)
+STD.__init__()
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class XrsxBb(_MQL5Indicator):
+    name = 'xrsx_bb'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'DSmoothMethod': _Choice({0: 'SMA', 1: 'EMA', 2: 'SMMA', 3: 'LWMA', 4: 'JJMA', 5: 'JurX', 6: 'ParMA', 7: 'T3', 8: 'VIDYA', 9: 'AMA'}, default=5),  # Price smoothing method
+        'DPeriod': 15,  # Moving average period
+        'DPhase': 100,  # Moving average smoothing parameter
+        'SSmoothMethod': _Choice({0: 'SMA', 1: 'EMA', 2: 'SMMA', 3: 'LWMA', 4: 'JJMA', 5: 'JurX', 6: 'ParMA', 7: 'T3', 8: 'VIDYA', 9: 'AMA'}, default=4),  # Signal line smoothing method
+        'SPeriod': 7,  # Signal line period
+        'SPhase': 100,  # Signal line parameter
+        'IPC': _Choice({1: 'Close', 2: 'Open', 3: 'High', 4: 'Low', 5: 'Median Price (HL/2)', 6: 'Typical Price (HLC/3)', 7: 'Weighted Close (HLCC/4)', 8: 'Simple Price (OC/2)', 9: 'Quarted Price (HLOC/4)', 10: 'TrendFollow_1 Price', 11: 'TrendFollow_2 Price'}, default=1),  # Price constant
+        'Shift': 0,  # Horizontal shift of the indicator in bars
+        'Style': _Choice({8: 'Colored line', 10: 'Colored histogram', 12: 'Colored labels'}, default=10),  # XRSX display style
+        'BBPeriod': 100,  # The period for Bollinger levels
+        'BBDeviation1': 1.0,  # Small deviation
+        'BBDeviation2': 1.6,  # Big deviation
+    }
+

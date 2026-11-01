@@ -1,0 +1,367 @@
+"""XFisher_org_v2_Candle_Cloud_Alerts — converted from MQL5: MQL5 Indicators/XFisher_org_v2_Candle_Cloud_Alert/XFisher_org_v2_Candle_Cloud_Alerts.mq5
+
+Copyright: 2013,   Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 3.24
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+from backtester.mql5.lib.smoothalgorithms import *  # #include SmoothAlgorithms.mqh
+
+MQL5_META = {'props': {'copyright': '2013,   Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '3.24', 'window': 'separate', 'indicator_buffers': 13, 'indicator_plots': 5}, 'types': {1: 7, 2: 7, 3: 7, 4: 7, 5: 17}, 'colors': {1: [14417815], 2: [15597514], 3: [16769535], 4: [16759295], 5: [16711935, 14524637, 8421504, 16436871, 16711680]}, 'widths': {}, 'styles': {}, 'labels': {1: 'Upper XFisher_org_v2_Candle_Cloud 2', 2: 'Upper XFisher_org_v2_Candle_Cloud 1', 3: 'Lower XFisher_org_v2_Candle_Cloud 1', 4: 'Lower XFisher_org_v2_Candle_Cloud 2', 5: 'XFisher_org_v2 Open;XFisher_org_v2 High;XFisher_org_v2 Low;XFisher_org_v2 Close'}, 'levels': [], 'description': [], 'name': 'XFisher_org_v2_Candle_Cloud_Alerts', 'source': 'MQL5 Indicators/XFisher_org_v2_Candle_Cloud_Alert/XFisher_org_v2_Candle_Cloud_Alerts.mq5', 'folder': 'XFisher_org_v2_Candle_Cloud_Alert', 'inputs': [{'mql': 'FLength', 'py': 'FLength', 'param': 'FLength', 'type': 'uint', 'default': 14, 'label': 'глубина усреднения', 'sinput': False}, {'mql': 'MA_SMethod', 'py': 'MA_SMethod', 'param': 'MA_SMethod', 'type': 'int', 'default': 4, 'label': 'Метод сглаживания', 'sinput': False}, {'mql': 'MA_Length', 'py': 'MA_Length', 'param': 'MA_Length', 'type': 'uint', 'default': 5, 'label': 'Глубина сглаживания', 'sinput': False}, {'mql': 'MA_Phase', 'py': 'MA_Phase', 'param': 'MA_Phase', 'type': 'int', 'default': 15, 'label': 'параметр сглаживания,', 'sinput': False}, {'mql': 'Gap', 'py': 'Gap', 'param': 'Gap', 'type': 'uint', 'default': 10, 'label': 'размер неучитываемого гэпа в пунктах', 'sinput': False}, {'mql': 'HighLevel', 'py': 'HighLevel', 'param': 'HighLevel', 'type': 'double', 'default': 0.6, 'label': 'уровень перезакупа', 'sinput': False}, {'mql': 'LowLevel', 'py': 'LowLevel', 'param': 'LowLevel', 'type': 'double', 'default': -0.6, 'label': 'уровень перепроданности', 'sinput': False}, {'mql': 'Shift', 'py': 'Shift', 'param': 'Shift', 'type': 'int', 'default': 0, 'label': 'Сдвиг индикатора по горизонтали в барах', 'sinput': False}, {'mql': 'NumberofBar', 'py': 'NumberofBar', 'param': 'NumberofBar', 'type': 'uint', 'default': 1, 'label': 'Номер бара для подачи сигнала', 'sinput': False}, {'mql': 'SoundON', 'py': 'SoundON', 'param': 'SoundON', 'type': 'bool', 'default': True, 'label': 'Разрешение алерта', 'sinput': False}, {'mql': 'NumberofAlerts', 'py': 'NumberofAlerts', 'param': 'NumberofAlerts', 'type': 'uint', 'default': 2, 'label': 'Количество алертов', 'sinput': False}, {'mql': 'EMailON', 'py': 'EMailON', 'param': 'EMailON', 'type': 'bool', 'default': False, 'label': 'Разрешение почтовой отправки сигнала', 'sinput': False}, {'mql': 'PushON', 'py': 'PushON', 'param': 'PushON', 'type': 'bool', 'default': False, 'label': 'Разрешение отправки сигнала на мобильный', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': ['SmoothAlgorithms.mqh']}
+
+# ---- inputs and global variables
+FLength = _input('FLength', 14)  # глубина усреднения
+MA_SMethod = _input('MA_SMethod', MODE_JJMA)  # Метод сглаживания
+MA_Length = _input('MA_Length', 5)  # Глубина сглаживания
+MA_Phase = _input('MA_Phase', 15)  # параметр сглаживания,
+Gap = _input('Gap', 10)  # размер неучитываемого гэпа в пунктах
+HighLevel = _input('HighLevel', 0.6)  # уровень перезакупа
+LowLevel = _input('LowLevel', -0.6)  # уровень перепроданности
+Shift = _input('Shift', 0)  # Сдвиг индикатора по горизонтали в барах
+NumberofBar = _input('NumberofBar', 1)  # Номер бара для подачи сигнала
+SoundON = _input('SoundON', True)  # Разрешение алерта
+NumberofAlerts = _input('NumberofAlerts', 2)  # Количество алертов
+EMailON = _input('EMailON', False)  # Разрешение почтовой отправки сигнала
+PushON = _input('PushON', False)  # Разрешение отправки сигнала на мобильный
+ExtOpenBuffer = Arr(0, 0.0)
+ExtHighBuffer = Arr(0, 0.0)
+ExtLowBuffer = Arr(0, 0.0)
+ExtCloseBuffer = Arr(0, 0.0)
+ExtColorBuffer = Arr(0, 0.0)
+UpUpBuffer1 = Arr(0, 0.0)
+UpDnBuffer1 = Arr(0, 0.0)
+DnUpBuffer1 = Arr(0, 0.0)
+DnDnBuffer1 = Arr(0, 0.0)
+UpUpBuffer2 = Arr(0, 0.0)
+UpDnBuffer2 = Arr(0, 0.0)
+DnUpBuffer2 = Arr(0, 0.0)
+DnDnBuffer2 = Arr(0, 0.0)
+min_rates_total = 0
+min_rates_1 = 0
+
+def OnInit():
+    global min_rates_1, min_rates_total
+    min_rates_1 = _int(FLength) + 1
+    min_rates_total = min_rates_1 + GetStartBars(MA_SMethod, MA_Length, MA_Phase)
+    IndInit(0, UpUpBuffer2, INDICATOR_DATA)
+    IndInit(1, UpDnBuffer2, INDICATOR_DATA)
+    PlotInit(0, EMPTY_VALUE, min_rates_total, Shift)
+    IndInit(2, UpUpBuffer1, INDICATOR_DATA)
+    IndInit(3, UpDnBuffer1, INDICATOR_DATA)
+    PlotInit(1, EMPTY_VALUE, min_rates_total, Shift)
+    IndInit(4, DnUpBuffer1, INDICATOR_DATA)
+    IndInit(5, DnDnBuffer1, INDICATOR_DATA)
+    PlotInit(2, EMPTY_VALUE, min_rates_total, Shift)
+    IndInit(6, DnUpBuffer2, INDICATOR_DATA)
+    IndInit(7, DnDnBuffer2, INDICATOR_DATA)
+    PlotInit(3, EMPTY_VALUE, min_rates_total, Shift)
+    SetIndexBuffer(8, ExtOpenBuffer, INDICATOR_DATA)
+    SetIndexBuffer(9, ExtHighBuffer, INDICATOR_DATA)
+    SetIndexBuffer(10, ExtLowBuffer, INDICATOR_DATA)
+    SetIndexBuffer(11, ExtCloseBuffer, INDICATOR_DATA)
+    SetIndexBuffer(12, ExtColorBuffer, INDICATOR_COLOR_INDEX)
+    PlotIndexSetInteger(4, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(4, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(4, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(4, PLOT_SHOW_DATA, False)
+    shortname = Box("")
+    StringConcatenate(shortname, 'XFisher_org_v2_Candle(', FLength, ')')
+    IndicatorSetString(INDICATOR_SHORTNAME, shortname.v)
+    IndicatorSetInteger(INDICATOR_DIGITS, 4)
+    IndicatorSetInteger(INDICATOR_LEVELS, 3)
+    IndicatorSetDouble(INDICATOR_LEVELVALUE, 0, HighLevel)
+    IndicatorSetDouble(INDICATOR_LEVELVALUE, 1, 50)
+    IndicatorSetDouble(INDICATOR_LEVELVALUE, 2, LowLevel)
+    IndicatorSetInteger(INDICATOR_LEVELCOLOR, 0, clrTeal)
+    IndicatorSetInteger(INDICATOR_LEVELCOLOR, 1, clrGray)
+    IndicatorSetInteger(INDICATOR_LEVELCOLOR, 2, clrMagenta)
+    IndicatorSetInteger(INDICATOR_LEVELSTYLE, 0, STYLE_DASHDOTDOT)
+    IndicatorSetInteger(INDICATOR_LEVELSTYLE, 1, STYLE_DASHDOTDOT)
+    IndicatorSetInteger(INDICATOR_LEVELSTYLE, 2, STYLE_DASHDOTDOT)
+    return INIT_SUCCEEDED
+
+def IndInit(Number, Buffer, Type):
+    SetIndexBuffer(Number, Buffer, Type)
+
+def PlotInit(Number, Empty_Value, Draw_Begin, nShift):
+    PlotIndexSetInteger(Number, PLOT_DRAW_BEGIN, Draw_Begin)
+    PlotIndexSetDouble(Number, PLOT_EMPTY_VALUE, Empty_Value)
+    PlotIndexSetInteger(Number, PLOT_SHIFT, nShift)
+    PlotIndexSetInteger(Number, PLOT_SHOW_DATA, False)
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    global _s_OnCalculate_cfish_prev, _s_OnCalculate_cvalue_prev, _s_OnCalculate_hfish_prev, _s_OnCalculate_hvalue_prev, _s_OnCalculate_lfish_prev, _s_OnCalculate_lvalue_prev, _s_OnCalculate_ofish_prev, _s_OnCalculate_ovalue_prev
+    if rates_total < min_rates_total:
+        return 0
+    first = 0
+    bar = 0
+    smax = 0.0
+    smin = 0.0
+    price = 0.0
+    wpr = 0.0
+    ovalue = 0.0
+    hvalue = 0.0
+    lvalue = 0.0
+    cvalue = 0.0
+    res1 = 0.0
+    res2 = 0.0
+    ofish = 0.0
+    hfish = 0.0
+    lfish = 0.0
+    cfish = 0.0
+    O = 0.0
+    H = 0.0
+    L = 0.0
+    C = 0.0
+    if prev_calculated > rates_total or prev_calculated <= 0:
+        first = min_rates_1
+        _s_OnCalculate_cvalue_prev = 0.0
+        _s_OnCalculate_lvalue_prev = _s_OnCalculate_cvalue_prev
+        _s_OnCalculate_hvalue_prev = _s_OnCalculate_lvalue_prev
+        _s_OnCalculate_ovalue_prev = _s_OnCalculate_hvalue_prev
+        _s_OnCalculate_cfish_prev = 0.0
+        _s_OnCalculate_lfish_prev = _s_OnCalculate_cfish_prev
+        _s_OnCalculate_hfish_prev = _s_OnCalculate_lfish_prev
+        _s_OnCalculate_ofish_prev = _s_OnCalculate_hfish_prev
+    else:
+        first = prev_calculated - 1
+    bar = first
+    for bar in range(bar, rates_total):
+        UpUpBuffer2[bar] = 3.5
+        UpDnBuffer2[bar] = HighLevel
+        UpUpBuffer1[bar] = HighLevel
+        UpDnBuffer1[bar] = 0.0
+        DnUpBuffer1[bar] = 0.0
+        DnDnBuffer1[bar] = LowLevel
+        DnUpBuffer2[bar] = LowLevel
+        DnDnBuffer2[bar] = -3.5
+        smax = DBL_MIN
+        smin = DBL_MAX
+        for iii in range(0, _int(FLength)):
+            barx = bar - iii
+            smax = MathMax(smax, high[barx])
+            smin = MathMin(smin, low[barx])
+        if smax == smin:
+            smax += Point()
+        price = open[bar]
+        wpr = _fdiv(price - smin, smax - smin)
+        ovalue = wpr - 0.5 + (0.67 * _s_OnCalculate_ovalue_prev)
+        ovalue = MathMin(ovalue, DBL_MAX)
+        ovalue = MathMax(ovalue, -DBL_MAX)
+        res1 = 1.0 - ovalue
+        if not res1:
+            res1 = 1.0
+        res2 = _fdiv(1.0 + ovalue, 1.0 - ovalue)
+        if res2 < 1e-07:
+            res2 = 1.0
+        ofish = (0.5 * MathLog(res2)) + (0.5 * _s_OnCalculate_ofish_prev)
+        O = oXMA.XMASeries(min_rates_1, prev_calculated, rates_total, MA_SMethod, MA_Phase, MA_Length, ofish, bar, False)
+        price = high[bar]
+        wpr = _fdiv(price - smin, smax - smin)
+        hvalue = wpr - 0.5 + (0.67 * _s_OnCalculate_hvalue_prev)
+        hvalue = MathMin(hvalue, DBL_MAX)
+        hvalue = MathMax(hvalue, -DBL_MAX)
+        res1 = 1.0 - hvalue
+        if not res1:
+            res1 = 1.0
+        res2 = _fdiv(1.0 + hvalue, 1.0 - hvalue)
+        if res2 < 1e-07:
+            res2 = 1.0
+        hfish = (0.5 * MathLog(res2)) + (0.5 * _s_OnCalculate_hfish_prev)
+        H = hXMA.XMASeries(min_rates_1, prev_calculated, rates_total, MA_SMethod, MA_Phase, MA_Length, hfish, bar, False)
+        price = low[bar]
+        wpr = _fdiv(price - smin, smax - smin)
+        lvalue = wpr - 0.5 + (0.67 * _s_OnCalculate_lvalue_prev)
+        lvalue = MathMin(lvalue, DBL_MAX)
+        lvalue = MathMax(lvalue, -DBL_MAX)
+        res1 = 1.0 - lvalue
+        if not res1:
+            res1 = 1.0
+        res2 = _fdiv(1.0 + lvalue, 1.0 - lvalue)
+        if res2 < 1e-07:
+            res2 = 1.0
+        lfish = (0.5 * MathLog(res2)) + (0.5 * _s_OnCalculate_lfish_prev)
+        L = lXMA.XMASeries(min_rates_1, prev_calculated, rates_total, MA_SMethod, MA_Phase, MA_Length, lfish, bar, False)
+        price = close[bar]
+        wpr = _fdiv(price - smin, smax - smin)
+        cvalue = wpr - 0.5 + (0.67 * _s_OnCalculate_cvalue_prev)
+        cvalue = MathMin(cvalue, DBL_MAX)
+        cvalue = MathMax(cvalue, -DBL_MAX)
+        res1 = 1.0 - cvalue
+        if not res1:
+            res1 = 1.0
+        res2 = _fdiv(1.0 + cvalue, 1.0 - cvalue)
+        if res2 < 1e-07:
+            res2 = 1.0
+        cfish = (0.5 * MathLog(res2)) + (0.5 * _s_OnCalculate_cfish_prev)
+        C = cXMA.XMASeries(min_rates_1, prev_calculated, rates_total, MA_SMethod, MA_Phase, MA_Length, cfish, bar, False)
+        Max = MathMax(O, C)
+        Max = MathMax(Max, L)
+        Max = MathMax(Max, H)
+        Min = MathMin(O, C)
+        Min = MathMin(Min, L)
+        Min = MathMin(Min, H)
+        ExtOpenBuffer[bar] = O
+        ExtHighBuffer[bar] = Max
+        ExtLowBuffer[bar] = Min
+        ExtCloseBuffer[bar] = C
+        if MathAbs(open[bar] - close[bar]) <= Gap:
+            ExtOpenBuffer[bar] = ExtCloseBuffer[MathMax(bar - 1, 0)]
+        clr = 2
+        trend = ExtCloseBuffer[bar] - ExtOpenBuffer[bar]
+        if ExtCloseBuffer[bar] > HighLevel or ExtCloseBuffer[bar] < LowLevel:
+            if trend > 0:
+                clr = _int(4.0)
+            elif trend < 0:
+                clr = _int(0.0)
+        else:
+            if trend > 0:
+                clr = _int(3.0)
+            elif trend < 0:
+                clr = _int(1.0)
+        ExtColorBuffer[bar] = clr
+        if bar < (rates_total - 1):
+            _s_OnCalculate_ovalue_prev = ovalue
+            _s_OnCalculate_ofish_prev = ofish
+            _s_OnCalculate_hvalue_prev = hvalue
+            _s_OnCalculate_hfish_prev = hfish
+            _s_OnCalculate_lvalue_prev = lvalue
+            _s_OnCalculate_lfish_prev = lfish
+            _s_OnCalculate_cvalue_prev = cvalue
+            _s_OnCalculate_cfish_prev = cfish
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    BuySignal('XFisher_org_v2_Candle_Alerts', rates_total, prev_calculated, close, spread)
+    SellSignal('XFisher_org_v2_Candle_Alerts', rates_total, prev_calculated, close, spread)
+    return rates_total
+
+def BuySignal(SignalSirname, Rates_total, Prev_calculated, Close, Spread):
+    global _s_BuySignal_counter
+    if Rates_total != Prev_calculated:
+        _s_BuySignal_counter = 0
+    SignalText = ''
+    BuySignal_ = False
+    index = _int(Rates_total - 1 - NumberofBar)
+    index1 = _int(Rates_total - 1 - NumberofBar) - 1
+    if ExtCloseBuffer[index1] <= 0 and ExtCloseBuffer[index] > 0:
+        BuySignal_ = True
+        SignalText = SignalText + 'Пробой нуля! '
+    if ExtColorBuffer[index1] < 3 and ExtColorBuffer[index] > 2:
+        BuySignal_ = True
+        SignalText = SignalText + 'Изменение направления движения свечи! '
+    if ExtCloseBuffer[index1] <= HighLevel and ExtCloseBuffer[index] > HighLevel:
+        BuySignal_ = True
+        SignalText = SignalText + 'Пробой уровня перекупленности! '
+    if ExtCloseBuffer[index1] < LowLevel and ExtCloseBuffer[index] >= LowLevel:
+        BuySignal_ = True
+        SignalText = SignalText + 'Выход из зоны перепроданности! '
+    if BuySignal_ and _s_BuySignal_counter <= NumberofAlerts:
+        _s_BuySignal_counter += 1
+        tm = MqlDateTime()
+        TimeToStruct(TimeCurrent(), tm)
+        text = TimeToString(TimeCurrent(), TIME_DATE) + ' ' + _str(tm.hour) + ':' + _str(tm.min)
+        Ask = Close[index]
+        Bid = Close[index]
+        Bid += Spread[index] * Point()
+        sAsk = DoubleToString(Ask, Digits())
+        sBid = DoubleToString(Bid, Digits())
+        sPeriod = GetStringTimeframe(ChartPeriod())
+        if SoundON:
+            Alert('BUY signal ' + SignalText + '\n Ask=', Ask, '\n Bid=', Bid, '\n currtime=', text, '\n Symbol=', Symbol(), ' Period=', sPeriod)
+        if EMailON:
+            SendMail(SignalSirname + ': BUY signal ' + SignalText, ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+        if PushON:
+            SendNotification(SignalSirname + ': BUY signal ' + SignalText + ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+
+def SellSignal(SignalSirname, Rates_total, Prev_calculated, Close, Spread):
+    global _s_SellSignal_counter
+    if Rates_total != Prev_calculated:
+        _s_SellSignal_counter = 0
+    SignalText = ''
+    SellSignal_ = False
+    index = _int(Rates_total - 1 - NumberofBar)
+    index1 = _int(Rates_total - 1 - NumberofBar) - 1
+    if ExtCloseBuffer[index1] >= 0 and ExtCloseBuffer[index] < 0:
+        SellSignal_ = True
+        SignalText = SignalText + 'Пробой нуля! '
+    if ExtColorBuffer[index1] > 1 and ExtColorBuffer[index] < 2:
+        SellSignal_ = True
+        SignalText = SignalText + 'Изменение направления движения свечи! '
+    if ExtCloseBuffer[index1] >= LowLevel and ExtCloseBuffer[index] < LowLevel:
+        SellSignal_ = True
+        SignalText = SignalText + 'Пробой уровня пепроданности! '
+    if ExtCloseBuffer[index1] > HighLevel and ExtCloseBuffer[index] <= HighLevel:
+        SellSignal_ = True
+        SignalText = SignalText + 'Выход из зоны перекупленности! '
+    if SellSignal_ and _s_SellSignal_counter <= NumberofAlerts:
+        _s_SellSignal_counter += 1
+        tm = MqlDateTime()
+        TimeToStruct(TimeCurrent(), tm)
+        text = TimeToString(TimeCurrent(), TIME_DATE) + ' ' + _str(tm.hour) + ':' + _str(tm.min)
+        Ask = Close[index]
+        Bid = Close[index]
+        Bid += Spread[index] * Point()
+        sAsk = DoubleToString(Ask, Digits())
+        sBid = DoubleToString(Bid, Digits())
+        sPeriod = GetStringTimeframe(ChartPeriod())
+        if SoundON:
+            Alert('SELL signal ' + SignalText + '\n Ask=', Ask, '\n Bid=', Bid, '\n currtime=', text, '\n Symbol=', Symbol(), ' Period=', sPeriod)
+        if EMailON:
+            SendMail(SignalSirname + ': SELL signal ' + SignalText, ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+        if PushON:
+            SendNotification(SignalSirname + ': SELL signal ' + SignalText + ' at Ask=' + sAsk + ', Bid=' + sBid + ', Date=' + text + ' Symbol=' + Symbol() + ' Period=' + sPeriod)
+
+def GetStringTimeframe(timeframe):
+    return StringSubstr(EnumToString(timeframe, 'ENUM_TIMEFRAMES'), 7, -1)
+
+# ---- global variables initialised from expressions
+oXMA = _alloc(CXMA)
+oXMA.__init__()
+hXMA = _alloc(CXMA)
+hXMA.__init__()
+lXMA = _alloc(CXMA)
+lXMA.__init__()
+cXMA = _alloc(CXMA)
+cXMA.__init__()
+
+# ---- static local variables
+_s_OnCalculate_ovalue_prev = 0.0
+_s_OnCalculate_ofish_prev = 0.0
+_s_OnCalculate_hvalue_prev = 0.0
+_s_OnCalculate_hfish_prev = 0.0
+_s_OnCalculate_lvalue_prev = 0.0
+_s_OnCalculate_lfish_prev = 0.0
+_s_OnCalculate_cvalue_prev = 0.0
+_s_OnCalculate_cfish_prev = 0.0
+_s_BuySignal_counter = 0
+_s_SellSignal_counter = 0
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class XFisherOrgV2CandleCloudAlerts(_MQL5Indicator):
+    name = 'XFisher_org_v2_Candle_Cloud_Alerts'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'FLength': 14,  # глубина усреднения
+        'MA_SMethod': _Choice({0: 'SMA', 1: 'EMA', 2: 'SMMA', 3: 'LWMA', 4: 'JJMA', 5: 'JurX', 6: 'ParMA', 7: 'T3', 8: 'VIDYA', 9: 'AMA'}, default=4),  # Метод сглаживания
+        'MA_Length': 5,  # Глубина сглаживания
+        'MA_Phase': 15,  # параметр сглаживания,
+        'Gap': 10,  # размер неучитываемого гэпа в пунктах
+        'HighLevel': 0.6,  # уровень перезакупа
+        'LowLevel': -0.6,  # уровень перепроданности
+        'Shift': 0,  # Сдвиг индикатора по горизонтали в барах
+        'NumberofBar': 1,  # Номер бара для подачи сигнала
+        'SoundON': True,  # Разрешение алерта
+        'NumberofAlerts': 2,  # Количество алертов
+        'EMailON': False,  # Разрешение почтовой отправки сигнала
+        'PushON': False,  # Разрешение отправки сигнала на мобильный
+    }
+
