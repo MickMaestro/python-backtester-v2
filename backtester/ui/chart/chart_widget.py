@@ -21,7 +21,7 @@ from backtester.indicators.base import Indicator, Pane
 
 from .candlestick_item import CandlestickItem
 from .chart_settings import ChartSettings, ChartSettingsDialog
-from .indicator_layer import IndicatorLayer, IndicatorSet
+from .indicator_layer import IndicatorLayer, IndicatorSet, RepaintSource
 from .indicator_pane import IndicatorPane
 from .separators import SeparatorLines, compute_separators
 from .time_axis import TimeAxisItem
@@ -259,8 +259,15 @@ class ChartWidget(QWidget):
             plot for plot in indicator.plots
             if (plot.pane or indicator.pane) is Pane.SEPARATE
         ]
+        # One source per indicator, shared by its layers, so a repainting
+        # indicator is recomputed once per replay step, not once per pane.
+        source = (
+            RepaintSource(indicator, self._df, values)
+            if indicator.repaint_window > 0 else None
+        )
         if price_plots:
             layer = IndicatorLayer(self.plot.getPlotItem(), candles=self.candles)
+            layer.set_repaint_source(source)
             layer.set_plots(price_plots, values)
             self._indicators.add(indicator, layer)
         if pane_plots:
@@ -269,6 +276,7 @@ class ChartWidget(QWidget):
             self._layout.addWidget(pane)
             self._panes.append(pane)
             layer = IndicatorLayer(pane.plot_item)
+            layer.set_repaint_source(source)
             layer.set_plots(pane_plots, values)
             self._indicators.add(indicator, layer)
 

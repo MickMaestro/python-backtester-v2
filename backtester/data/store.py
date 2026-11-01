@@ -166,7 +166,14 @@ class DataStore:
         path = self.root / info.filename
         if not path.exists():
             raise StoreError(f"Dataset file missing on disk: {path}")
-        return pd.read_parquet(path)
+        df = pd.read_parquet(path)
+        # Instrument precision travels with the bars so converted MQL5
+        # indicators can resolve ``_Point``/``_Digits``.
+        if info.point:
+            df.attrs["point"] = float(info.point)
+        if info.digits is not None:
+            df.attrs["digits"] = int(info.digits)
+        return df
 
     def delete(self, symbol: str, timeframe: str) -> None:
         catalog = self._read_catalog()

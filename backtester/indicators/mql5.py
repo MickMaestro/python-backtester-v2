@@ -306,15 +306,222 @@ def true_range(high, low, close) -> np.ndarray:
 
 
 def atr(high, low, close, period: int = 14) -> np.ndarray:
-    """MT5's ``iATR``: a smoothed average of true range."""
+    """MT5's ``iATR``: a simple moving average of true range.
+
+    ATR.mq5 seeds bar ``period`` with the mean of the first ``period`` true
+    ranges, then rolls ``atr[i-1] + (tr[i] - tr[i-period]) / period`` — a plain
+    SMA, not Wilder's smoothing.
+    """
+    period = max(int(period), 1)
     tr = true_range(high, low, close)
     out = np.full(len(tr), EMPTY)
     if len(tr) <= period:
         return out
-    seed = float(np.mean(tr[1 : period + 1]))
-    tail = pd.Series(np.concatenate([[seed], tr[period + 1 :]]))
-    out[period:] = tail.ewm(alpha=1.0 / period, adjust=False).mean().to_numpy()
+    out[period:] = pd.Series(tr[1:]).rolling(period).mean().to_numpy()[period - 1:]
     return out
+
+
+def wpr(high, low, close, period: int = 14) -> np.ndarray:
+    """MT5's ``iWPR``: -100 × (highest high − close) / range, held on a flat range."""
+    period = max(int(period), 1)
+    hh = pd.Series(high).rolling(period).max().to_numpy()
+    ll = pd.Series(low).rolling(period).min().to_numpy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = -(hh - np.asarray(close, dtype=float)) * 100.0 / (hh - ll)
+    out = np.where(hh == ll, np.nan, out)
+    filled = pd.Series(out).ffill().to_numpy()
+    filled[: period - 1] = EMPTY
+    return filled
+
+
+def cci(values: np.ndarray, period: int = 14) -> np.ndarray:
+    """MT5's ``iCCI`` on an already-applied price series."""
+    values = np.asarray(values, dtype=float)
+    period = max(int(period), 1)
+    n = len(values)
+    out = np.full(n, EMPTY)
+    if n < period:
+        return out
+    mean = sma(values, period)
+    windows = np.lib.stride_tricks.sliding_window_view(values, period)
+    centre = mean[period - 1:][:, None]
+    dev = np.sum(np.abs(windows - centre), axis=1) * 0.015 / period
+    with np.errstate(divide="ignore", invalid="ignore"):
+        result = np.where(dev != 0, (values[period - 1:] - mean[period - 1:]) / dev, 0.0)
+    out[period - 1:] = result
+    return out
+
+
+def rsi(values: np.ndarray, period: int = 14) -> np.ndarray:
+    """MT5's ``iRSI``: Wilder smoothing seeded with the plain average of the
+    first ``period`` changes."""
+    values = np.asarray(values, dtype=float)
+    period = max(int(period), 1)
+    n = len(values)
+    out = np.full(n, EMPTY)
+    if n <= period:
+        return out
+    diff = np.diff(values, prepend=values[0])
+    gains = np.where(diff > 0, diff, 0.0)
+    losses = np.where(diff < 0, -diff, 0.0)
+    pos = np.empty(n)
+    neg = np.empty(n)
+    pos[period] = gains[1: period + 1].mean()
+    neg[period] = losses[1: period + 1].mean()
+    for i in range(period + 1, n):
+        pos[i] = (pos[i - 1] * (period - 1) + gains[i]) / period
+        neg[i] = (neg[i - 1] * (period - 1) + losses[i]) / period
+    p = pos[period:]
+    m = neg[period:]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out[period:] = np.where(m != 0, 100.0 - 100.0 / (1.0 + p / m),
+                                np.where(p != 0, 100.0, 50.0))
+    return out
+
+
+def momentum(values: np.ndarray, period: int = 14) -> np.ndarray:
+    """MT5's ``iMomentum``: price / price ``period`` bars ago × 100."""
+    values = np.asarray(values, dtype=float)
+    back = shift_forward(values, period)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(back != 0, values * 100.0 / back, EMPTY)
+
+
+def stddev(values: np.ndarray, period: int = 20, method: str = "sma") -> np.ndarray:
+    """MT5's ``iStdDev``: deviation from the chosen MA over ``period`` bars."""
+    values = np.asarray(values, dtype=float)
+    period = max(int(period), 1)
+    n = len(values)
+    out = np.full(n, EMPTY)
+    if n < period:
+        return out
+    centre = ma(values, period, method)
+    windows = np.lib.stride_tricks.sliding_window_view(values, period)
+    out[period - 1:] = np.sqrt(np.mean((windows - centre[period - 1:][:, None]) ** 2, axis=1))
+    return out
+
+
+def stochastic(high, low, close, k_period: int = 5, d_period: int = 3,
+               slowing: int = 3, method: str = "sma") -> tuple[np.ndarray, np.ndarray]:
+    """MT5's ``iStochastic`` (low/high price field): main and signal lines."""
+    k_period = max(int(k_period), 1)
+    slowing = max(int(slowing), 1)
+    hh = pd.Series(high).rolling(k_period).max()
+    ll = pd.Series(low).rolling(k_period).min()
+    num = (pd.Series(close) - ll).rolling(slowing).sum()
+    den = (hh - ll).rolling(slowing).sum()
+    main = np.where(den.to_numpy() == 0, 100.0, (num / den).to_numpy() * 100.0)
+    main = np.where(np.isfinite(den.to_numpy()), main, EMPTY)
+    start = int(np.argmax(np.isfinite(main))) if np.isfinite(main).any() else len(main)
+    signal = np.full(len(main), EMPTY)
+    if start < len(main):
+        signal[start:] = ma(main[start:], d_period, method)
+    return main, signal
+
+
+def macd(values: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9):
+    """MT5's ``iMACD``: EMA difference and an SMA signal line."""
+    main = ema(values, fast) - ema(values, slow)
+    start = int(np.argmax(np.isfinite(main))) if np.isfinite(main).any() else len(main)
+    sig = np.full(len(main), EMPTY)
+    if start < len(main):
+        sig[start:] = sma(main[start:], signal)
+    return main, sig
+
+
+def sar(high, low, step: float = 0.02, maximum: float = 0.2) -> np.ndarray:
+    """MT5's ``iSAR`` (ParabolicSAR.mq5). The value on bar i+1 is projected
+    on bar i, and bar i+1 flips it if its own range crosses it.
+
+    ParabolicSAR.mq5 leaves the newest bar unchecked because live it is still
+    forming; on history every bar is closed, so every bar is checked — its
+    flip uses only that bar's own high/low."""
+    high = np.asarray(high, dtype=float)
+    low = np.asarray(low, dtype=float)
+    n = len(high)
+    out = np.full(n, EMPTY)
+    if n < 3:
+        return out
+    af = np.zeros(n)
+    ep = np.zeros(n)
+    af[0] = af[1] = step
+    out[0] = high[0]
+    last_rev = 0
+    long_ = False
+    out[1] = high[last_rev: 2].max()
+    ep[0] = ep[1] = low[1]
+    for i in range(1, n):
+        if long_:
+            if out[i] > low[i]:
+                long_ = False
+                out[i] = high[last_rev: i + 1].max()
+                ep[i] = low[i]
+                last_rev = i
+                af[i] = step
+        else:
+            if out[i] < high[i]:
+                long_ = True
+                out[i] = low[last_rev: i + 1].min()
+                ep[i] = high[i]
+                last_rev = i
+                af[i] = step
+        if long_:
+            if high[i] > ep[i - 1] and i != last_rev:
+                ep[i] = high[i]
+                af[i] = min(af[i - 1] + step, maximum)
+            elif i != last_rev:
+                af[i], ep[i] = af[i - 1], ep[i - 1]
+            if i + 1 < n:
+                out[i + 1] = out[i] + af[i] * (ep[i] - out[i])
+                if out[i + 1] > low[i] or out[i + 1] > low[i - 1]:
+                    out[i + 1] = min(low[i], low[i - 1])
+        else:
+            if low[i] < ep[i - 1] and i != last_rev:
+                ep[i] = low[i]
+                af[i] = min(af[i - 1] + step, maximum)
+            elif i != last_rev:
+                af[i], ep[i] = af[i - 1], ep[i - 1]
+            if i + 1 < n:
+                out[i + 1] = out[i] + af[i] * (ep[i] - out[i])
+                if out[i + 1] < high[i] or out[i + 1] < high[i - 1]:
+                    out[i + 1] = max(high[i], high[i - 1])
+    return out
+
+
+def adx(high, low, close, period: int = 14) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """MT5's ``iADX``: (ADX, +DI, -DI), smoothed with EMA(period) as ADX.mq5 does."""
+    high = np.asarray(high, dtype=float)
+    low = np.asarray(low, dtype=float)
+    close = np.asarray(close, dtype=float)
+    n = len(high)
+    pdi = np.full(n, EMPTY)
+    mdi = np.full(n, EMPTY)
+    out = np.full(n, EMPTY)
+    if n < 2:
+        return out, pdi, mdi
+    up = np.r_[0.0, high[1:] - high[:-1]]
+    dn = np.r_[0.0, low[:-1] - low[1:]]
+    up = np.maximum(up, 0.0)
+    dn = np.maximum(dn, 0.0)
+    pdm = np.where(up > dn, up, 0.0)
+    mdm = np.where(dn > up, dn, 0.0)
+    tr = true_range(high, low, close)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        p = np.where(tr != 0, 100.0 * pdm / tr, 0.0)
+        m = np.where(tr != 0, 100.0 * mdm / tr, 0.0)
+    alpha = 2.0 / (period + 1.0)
+
+    def from_zero(x):
+        # ADX.mq5's ExponentialMA recursion starts from a zeroed bar 0.
+        return pd.Series(np.r_[0.0, x[1:]]).ewm(alpha=alpha, adjust=False).mean().to_numpy()
+
+    pdi = from_zero(p)
+    mdi = from_zero(m)
+    total = pdi + mdi
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dx = np.where(total != 0, 100.0 * np.abs(pdi - mdi) / total, 0.0)
+    out = from_zero(dx)
+    return out, pdi, mdi
 
 
 def highest(values: np.ndarray, period: int) -> np.ndarray:
@@ -466,6 +673,160 @@ def segments(values: np.ndarray, mask: np.ndarray) -> np.ndarray:
     keep = mask.copy()
     keep[:-1] |= mask[1:]
     return np.where(keep, values, EMPTY)
+
+
+# -------------------------------------------------------------------- zigzags
+
+
+def zigzag(high, low, depth: int = 12, deviation: float = 0.0,
+           backstep: int = 3, start: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """MetaQuotes' classic ZigZag (ZigZag.mq5 / ZigzagColor.mq5), full pass.
+
+    Returns (peaks, troughs): NaN except at turning points. ``deviation`` is a
+    price distance (the source's ``ExtDeviation * _Point``). A turning point
+    only ever moves to a later bar, so each surviving one was already the
+    leg's extreme on its own bar — known there, not before. ``start`` is the
+    first bar scanned (``depth - 1`` in ZigZag.mq5, ``depth`` in the
+    ZZOnBuffer library); pass the same array as high and low to zigzag a
+    single series.
+    """
+    high = np.asarray(high, dtype=float)
+    low = np.asarray(low, dtype=float)
+    n = len(high)
+    peaks = np.zeros(n)
+    troughs = np.zeros(n)
+    if n < 100:                  # the source draws nothing on short history
+        return np.full(n, EMPTY), np.full(n, EMPTY)
+    depth = max(int(depth), 1)
+    backstep = max(int(backstep), 0)
+    lowest_low = pd.Series(low).rolling(depth, min_periods=1).min().to_numpy()
+    highest_high = pd.Series(high).rolling(depth, min_periods=1).max().to_numpy()
+    low_map = np.zeros(n)
+    high_map = np.zeros(n)
+    last_low = last_high = 0.0
+    # Never let the backstep look-back reach below bar 0 (Python would wrap).
+    first = max(depth - 1 if start is None else int(start), backstep)
+    for shift in range(first, n):
+        val = lowest_low[shift]
+        if val == last_low:
+            val = 0.0
+        else:
+            last_low = val
+            if low[shift] - val > deviation:
+                val = 0.0
+            else:
+                for back in range(backstep, 0, -1):
+                    res = low_map[shift - back]
+                    if res != 0 and res > val:
+                        low_map[shift - back] = 0.0
+        low_map[shift] = val if low[shift] == val else 0.0
+
+        val = highest_high[shift]
+        if val == last_high:
+            val = 0.0
+        else:
+            last_high = val
+            if val - high[shift] > deviation:
+                val = 0.0
+            else:
+                for back in range(backstep, 0, -1):
+                    res = high_map[shift - back]
+                    if res != 0 and res < val:
+                        high_map[shift - back] = 0.0
+        high_map[shift] = val if high[shift] == val else 0.0
+
+    look_for = 0
+    last_low = last_high = 0.0
+    last_low_pos = last_high_pos = 0
+    for shift in range(first, n):
+        if look_for == 0:
+            if last_low == 0 and last_high == 0:
+                if high_map[shift] != 0:
+                    last_high, last_high_pos, look_for = high[shift], shift, -1
+                    peaks[shift] = last_high
+                if low_map[shift] != 0:
+                    last_low, last_low_pos, look_for = low[shift], shift, 1
+                    troughs[shift] = last_low
+        elif look_for == 1:
+            if low_map[shift] != 0 and low_map[shift] < last_low and high_map[shift] == 0:
+                troughs[last_low_pos] = 0.0
+                last_low_pos, last_low = shift, low_map[shift]
+                troughs[shift] = last_low
+            if high_map[shift] != 0 and low_map[shift] == 0:
+                last_high, last_high_pos, look_for = high_map[shift], shift, -1
+                peaks[shift] = last_high
+        else:
+            if high_map[shift] != 0 and high_map[shift] > last_high and low_map[shift] == 0:
+                peaks[last_high_pos] = 0.0
+                last_high_pos, last_high = shift, high_map[shift]
+                peaks[shift] = last_high
+            if low_map[shift] != 0 and high_map[shift] == 0:
+                last_low, last_low_pos, look_for = low_map[shift], shift, 1
+                troughs[shift] = last_low
+    return np.where(peaks != 0, peaks, EMPTY), np.where(troughs != 0, troughs, EMPTY)
+
+
+def pivot_line(pivots: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """A zigzag through ``pivots`` (NaN except at turning points), drawable as
+    an ordinary line, plus the bar each point becomes known.
+
+    MT5 draws ``DRAW_ZIGZAG``/``DRAW_SECTION`` by joining non-empty values. A
+    final pivot was already the leg's running extreme on its own bar, so it is
+    known there; the straight run *between* two pivots depends on the later
+    one, so it is known only once that pivot prints. Feeding ``known`` to
+    ``Plot.known_at`` keeps the replay from drawing a leg before it exists.
+    """
+    pivots = np.asarray(pivots, dtype=float)
+    n = len(pivots)
+    line = np.full(n, EMPTY)
+    known = np.full(n, np.inf)
+    idx = np.nonzero(np.isfinite(pivots))[0]
+    if len(idx) == 0:
+        return line, known
+    line[idx[0]: idx[-1] + 1] = np.interp(
+        np.arange(idx[0], idx[-1] + 1), idx, pivots[idx]
+    )
+    known[idx] = idx
+    for a, b in zip(idx[:-1], idx[1:]):
+        known[a + 1: b] = b
+    return line, known
+
+
+def leg_colors(pivots: np.ndarray, slots: np.ndarray) -> np.ndarray:
+    """Colour slot for every bar of a zigzag leg, taken from the slot at the
+    leg's closing pivot (how ``DRAW_COLOR_ZIGZAG`` colours a section)."""
+    pivots = np.asarray(pivots, dtype=float)
+    out = np.full(len(pivots), EMPTY)
+    idx = np.nonzero(np.isfinite(pivots))[0]
+    for a, b in zip(idx[:-1], idx[1:]):
+        out[a + 1: b + 1] = slots[b]
+    return out
+
+
+# ------------------------------------------------------------ instrument precision
+
+
+def digits(df: pd.DataFrame) -> int:
+    """MQL5's ``_Digits``: from the dataset's stored spec, else inferred as the
+    fewest decimals that represent every price exactly."""
+    stored = df.attrs.get("digits")
+    if stored is not None:
+        return int(stored)
+    prices = df[["open", "high", "low", "close"]].to_numpy(dtype=float).ravel()
+    prices = prices[np.isfinite(prices)][:5000]
+    for d in range(0, 9):
+        scaled = prices * 10.0**d
+        if np.all(np.abs(scaled - np.round(scaled)) < 1e-6):
+            return d
+    return 5
+
+
+def point(df: pd.DataFrame) -> float:
+    """MQL5's ``_Point``: the stored spec's point, else 10^-digits."""
+    stored = df.attrs.get("point")
+    if stored:
+        return float(stored)
+    return 10.0 ** -digits(df)
 
 
 # ------------------------------------------------------------------ time helpers

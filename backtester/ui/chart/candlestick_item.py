@@ -24,6 +24,14 @@ DOWN_COLOR = QColor("#ef5350")
 LINE_COLOR = QColor("#5c7cfa")
 
 
+def _nan_range(low: np.ndarray, high: np.ndarray) -> tuple[float | None, float | None]:
+    finite_low = low[np.isfinite(low)]
+    finite_high = high[np.isfinite(high)]
+    if len(finite_low) == 0 or len(finite_high) == 0:
+        return None, None
+    return float(finite_low.min()), float(finite_high.max())
+
+
 class CandlestickItem(pg.GraphicsObject):
     def __init__(self, max_candles: int = 4000, body_width: float = 0.7):
         super().__init__()
@@ -98,7 +106,10 @@ class CandlestickItem(pg.GraphicsObject):
         n = self.visible_length
         if n == 0:
             return QRectF()
-        lo, hi = float(self._l[:n].min()), float(self._h[:n].max())
+        # nan-aware: indicator-drawn candles are empty through their warm-up.
+        lo, hi = _nan_range(self._l[:n], self._h[:n])
+        if lo is None:
+            return QRectF()
         return QRectF(-1.0, lo, n + 1.0, max(hi - lo, 1e-12))
 
     def dataBounds(self, ax, frac=1.0, orthoRange=None):
@@ -115,7 +126,8 @@ class CandlestickItem(pg.GraphicsObject):
                 return (None, None)
         else:
             i0, i1 = 0, n
-        return (float(self._l[i0:i1].min()), float(self._h[i0:i1].max()))
+        lo, hi = _nan_range(self._l[i0:i1], self._h[i0:i1])
+        return (None, None) if lo is None else (lo, hi)
 
     def pixelPadding(self) -> float:
         return 2.0
@@ -176,6 +188,8 @@ class CandlestickItem(pg.GraphicsObject):
 
         o, h, l, c = self._o, self._h, self._l, self._c
         for i in range(i0, i1):
+            if not (np.isfinite(o[i]) and np.isfinite(c[i])):
+                continue
             rising = c[i] >= o[i]
             override = self._color_at(i)
             if override is not None:
@@ -220,6 +234,10 @@ class CandlestickItem(pg.GraphicsObject):
         stride = max(1, (i1 - i0) // 20_000)
         xs = np.arange(i0, i1, stride)
         ys = self._c[i0:i1:stride]
+        finite = np.isfinite(ys)
+        xs, ys = xs[finite], ys[finite]
+        if len(xs) == 0:
+            return
         path = QPainterPath()
         path.moveTo(float(xs[0]), float(ys[0]))
         for x, y in zip(xs[1:], ys[1:]):

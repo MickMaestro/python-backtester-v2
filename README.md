@@ -79,6 +79,24 @@ came from and what was left out. Terminal-only behaviour — alerts, sounds,
 notifications, chart objects, multi-timeframe `iCustom` calls — has no meaning
 here and is documented as skipped rather than faked.
 
+A further 90 come from the unzipped `.mq5` files under
+`mql5_indicators/MQL5 Codebase/`:
+
+| Group | Indicators |
+|---|---|
+| **Standard set** (`onarray_standard.py`, Integer's *IncOnArray* library) | Moving Average, DEMA, TEMA, AMA, VIDYA, FRAMA, Bollinger Bands, Envelopes, Price Channel, Ichimoku, Parabolic SAR, Fractals, MACD, OsMA, RSI, Stochastic, Williams %R, CCI, Momentum, CMO, Efficiency Ratio (+ directional), VHF, TRIX, Standard Deviation, RVI, DeMarker, ADX, ADX Wilder, ATR, Bulls & Bears Power, Chaikin Volatility, Accumulation/Distribution, Chaikin Oscillator, Force Index, MFI, OBV |
+| **Signal modules** | 3LineBreak, ASCtrend, BykovTrend, SuperTrend, Karacatica, LeManSignal, PriceChannel Stop, SilverTrend Signal, WPRSI Signal, Sidus, Stalin, FiboCandles, NonLagDot, Delta ZigZag, Candles Smoothed, Heiken Ashi Smoothed, ColorJFatl, Go, Chande Momentum Oscillator, T3, ColorLaguerre, BrainTrend1/2, Gann HiLo, Ozymandias Lite |
+| **Library demos** | IdealZZ / IdealZZP, ZigzagColor, MACD Histogram, SlopeDirectionLine, Stochastic With Flat, RSI ZigZag, Adaptive ATR Channel, ColorRSI-MACD, EMA (SmoothAlgorithms), Donchian Blocks, MA Class Line, SAR Above/Below, RSI Zones, NELODI ADX / Chart / Volume |
+| **XU set** | ZigZag, XU ZZ1, XU VWAP, XU HA Candles + EMA Ribbon, XU EFFECT, XU RSI MA1 AutoScale, XU Daily Range, MMATH (Murrey Math), XU SEMAPHORE-X, XU SEMA LRG, XU Sessions |
+
+Not converted, because they draw no chart data or need data the app doesn't
+have: chart tools and panels (ChartScale, Chart Scroll, Time Buttons, clocks,
+news tickers, XU Panels/Dash, MT Dashboard, XU ZERO), live-account and tick
+displays (risk %, profit line, bid/ask histograms, trade transactions),
+indicators fed by other programs or symbols (Interchange, MultiMomentum,
+ArrowDrawingIndiEu), library test harnesses that only print or draw canvases,
+and the NELODI BackProp forecast, Main, Trade, Trend Painter and Trend Waves.
+
 ### Templates
 
 A set of indicators with their parameters can be saved as a named **template**
@@ -130,18 +148,37 @@ class Envelope(Indicator):
 ```
 
 `calculate` returns one array per plot, aligned to the bars, NaN where the
-value is undefined. Draw styles are `LINE`, `ARROW`, `HISTOGRAM`, `FILL`
-(a shaded band to another plot), `CANDLE_COLOR` (a colour slot per candle),
-`CORNER_TEXT` (the latest value as a corner readout) and `NONE`. Parameters
+value is undefined. Draw styles are `LINE`, `SECTION` (straight segments
+between the non-NaN values), `ZIGZAG` (MT5's two-buffer zigzag), `ARROW`,
+`HISTOGRAM`, `FILL` (a shaded band to another plot), `CANDLE_COLOR` (a colour
+slot per candle), `CANDLES` (the indicator's own candles, from
+`<key>_open/_high/_low/_close`), `CORNER_TEXT` (the latest value as a corner
+readout) and `NONE`. Parameters
 take ints, floats, bools, or a `Choice` for a dropdown; a plot can set
 `pane=Pane.PRICE` to sit on the candles while the rest of the indicator lives
 in its own window, and `text=` labels each unbroken run of a line — which is
 how a level that restarts every day gets its name printed once per day.
 
+Indicators that paint back in time need to tell the replay when a value
+became known, or the chart would show it early:
+
+- `Plot(known_at="key")` names a series holding, per bar, the bar index at
+  which that value was decided (a fractal two bars later, a zigzag leg when its
+  closing pivot prints); the replay hides it until then.
+- `Plot(expires_at="key")` is the reverse — the last bar a value is current,
+  for drawings that get replaced (the forming day's box in Daily Range).
+- `repaint_window = N` on the indicator makes the replay recompute it on the
+  last *N* revealed bars, so a zigzag's newest swing shows as it stood at that
+  moment instead of only the swings that survive with hindsight.
+
 [`backtester/indicators/mql5.py`](backtester/indicators/mql5.py) carries the
 MetaTrader maths the conversions share — moving averages in both the terminal's
 and the mladen-family flavours, the full applied-price list including Heiken
-Ashi, ATR, six RSI variants, and the noise filter.
+Ashi, the terminal's ATR, RSI, WPR, CCI, ADX, SAR, Stochastic and MACD, six RSI
+variants, the classic ZigZag, `_Point`/`_Digits` (from the dataset's stored
+spec), and the noise filter. [`onarray.py`](backtester/indicators/onarray.py)
+and [`smoothing.py`](backtester/indicators/smoothing.py) are the *IncOnArray*
+and *SmoothAlgorithms* libraries (JJMA, JurX, ParMA, T3, VIDYA, AMA, …).
 
 ## Backtest tab (visual replay)
 

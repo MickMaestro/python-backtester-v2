@@ -42,10 +42,20 @@ class Pane(Enum):
 
 class DrawStyle(Enum):
     LINE = "line"
+    SECTION = "section"          # straight segments joining non-NaN values (zigzags)
+    #: MT5's DRAW_ZIGZAG: joins the non-NaN values of ``key`` (highs) and
+    #: ``fill_with`` (lows) in bar order; a bar holding both draws a stroke.
+    ZIGZAG = "zigzag"
     ARROW = "arrow"              # a marker per non-NaN value
     HISTOGRAM = "histogram"      # vertical bars from zero
+    #: MT5's DRAW_HISTOGRAM2: vertical bars between ``fill_with`` and ``key``.
+    HISTOGRAM2 = "histogram2"
     FILL = "fill"                # shaded band between this plot and ``fill_with``
     CANDLE_COLOR = "candle_color"  # per-bar colour index applied to the candles
+    #: The indicator's own candles (MT5's DRAW_CANDLES/DRAW_COLOR_CANDLES), from
+    #: ``<key>_open/_high/_low/_close``; coloured by ``color_key`` slots, else
+    #: ``colors[0]`` rising / ``colors[1]`` falling.
+    CANDLES = "candles"
     CORNER_TEXT = "corner_text"  # the latest value as text in a chart corner
     NONE = "none"                # computed but not drawn
 
@@ -70,6 +80,18 @@ class Plot:
     #: CORNER_TEXT: a format string, e.g. "Bid Ratio {value:.2f}%".
     text: str = ""
     corner: str = "bottom-left"    # CORNER_TEXT: which corner to pin to
+    #: LINE/SECTION: whether the line widens the chart's auto-range. Off for
+    #: reference grids far from price (MT5 scales the price chart to price).
+    autoscale: bool = True
+    #: Key of a series giving, per bar, the bar index at which that value
+    #: becomes known. For indicators that paint back in time (fractals,
+    #: zigzags): the replay hides a value until its confirming bar is shown.
+    known_at: str = ""
+    #: Key of a series giving, per bar, the last bar index at which that
+    #: value is still current; once a later bar is shown it is hidden. For
+    #: drawings MT5 replaces as time moves on (a forming day's box, "last N
+    #: days" windows). Applies on static charts too, against the final bar.
+    expires_at: str = ""
 
     def __post_init__(self) -> None:
         if not self.label:
@@ -128,6 +150,12 @@ class Indicator:
     levels: list[Level] = []
     #: Fixed y-range for a separate pane, e.g. ``(0, 100)`` for an oscillator.
     y_range: tuple[float, float] | None = None
+    #: For indicators that rewrite recent history (zigzags, swing markers):
+    #: during a replay the chart recomputes them on the last
+    #: ``repaint_window`` revealed bars, so the newest stretch shows what the
+    #: indicator showed at that moment — provisional swings included — rather
+    #: than only the swings that survive with hindsight. 0 = not needed.
+    repaint_window: int = 0
 
     def __init__(self, **overrides):
         unknown = set(overrides) - set(self.params)

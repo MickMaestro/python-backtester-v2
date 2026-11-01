@@ -200,8 +200,10 @@ def test_every_converted_indicator_computes_and_declares_its_plots():
         values = indicator.calculate(df)
         assert indicator.plots, f"{name} declares no plots"
         for plot in indicator.plots:
-            assert plot.key in values, f"{name} is missing series {plot.key}"
-            assert len(values[plot.key]) == len(df), f"{name}.{plot.key} is misaligned"
+            # Indicator-drawn candles keep four series under <key>_open/…
+            key = f"{plot.key}_close" if plot.style is DrawStyle.CANDLES else plot.key
+            assert key in values, f"{name} is missing series {key}"
+            assert len(values[key]) == len(df), f"{name}.{key} is misaligned"
 
 
 def test_indicators_survive_a_short_frame():
