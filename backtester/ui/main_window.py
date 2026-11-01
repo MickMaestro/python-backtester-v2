@@ -12,6 +12,7 @@ from backtester.ui.data_tab import DataTab
 from backtester.ui.optimizer_tab import OptimizerTab
 from backtester.ui.results_tab import ResultsTab
 from backtester.ui.settings import app_settings
+from backtester.ui.theme import populate_theme_menu
 
 
 class MainWindow(QMainWindow):
@@ -49,11 +50,16 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.optimizer_tab, "Optimizer")
         self.setCentralWidget(self.tabs)
 
+        self._build_view_menu()
         self.statusBar().showMessage("Ready")
 
         geometry = app_settings().value("window/geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
+
+    def _build_view_menu(self) -> None:
+        theme_menu = self.menuBar().addMenu("&View").addMenu("&Theme")
+        self.theme_actions = populate_theme_menu(theme_menu)
 
     def _on_run_completed(self, result, title: str, switch: bool) -> None:
         self.results_tab.show_result(result, title)
