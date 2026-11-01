@@ -1,0 +1,282 @@
+"""rapid_rsi_adaptive_t3_pre-filtered_2 — converted from MQL5: MQL5 Indicators/Rapid RSI T3 Prefiltered/rapid_rsi_adaptive_t3_pre-filtered_2.mq5
+
+Copyright: www.forex-tsd.com; Link: www.forex-tsd.com
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+
+MQL5_META = {'props': {'copyright': 'www.forex-tsd.com', 'link': 'www.forex-tsd.com', 'window': 'separate', 'indicator_buffers': 6, 'indicator_plots': 2, 'indicator_minimum': -1.0, 'indicator_maximum': 101.0}, 'types': {1: 11, 2: 8}, 'colors': {1: [3329330, 42495], 2: [3329330, 42495]}, 'widths': {1: 2, 2: 2}, 'styles': {1: 0, 2: 0}, 'labels': {1: 'Rapid RSi of adaptive T3', 2: 'Rapid RSi of adaptive T3'}, 'levels': [], 'description': [], 'name': 'rapid_rsi_adaptive_t3_pre-filtered_2', 'source': 'MQL5 Indicators/Rapid RSI T3 Prefiltered/rapid_rsi_adaptive_t3_pre-filtered_2.mq5', 'folder': 'Rapid RSI T3 Prefiltered', 'inputs': [{'mql': 'RsiPeriod', 'py': 'RsiPeriod', 'param': 'RsiPeriod', 'type': 'int', 'default': 25, 'label': 'Rsi period', 'sinput': False}, {'mql': 'T3Period', 'py': 'T3Period', 'param': 'T3Period', 'type': 'double', 'default': 15.0, 'label': 'T3 Calculation period', 'sinput': False}, {'mql': 'T3Hot', 'py': 'T3Hot', 'param': 'T3Hot', 'type': 'double', 'default': 0.7, 'label': 'T3 hot value', 'sinput': False}, {'mql': 'T3Original', 'py': 'T3Original', 'param': 'T3Original', 'type': 'bool', 'default': True, 'label': 'T3 original Tillson calculation?', 'sinput': False}, {'mql': 'Price', 'py': 'Price', 'param': 'Price', 'type': 'int', 'default': 0, 'label': 'Price to use', 'sinput': False}, {'mql': 'AdaptivePeriod', 'py': 'AdaptivePeriod', 'param': 'AdaptivePeriod', 'type': 'int', 'default': 25, 'label': 'Period for adapting', 'sinput': False}, {'mql': 'ColorFrom', 'py': 'ColorFrom', 'param': None, 'type': 'color', 'default': 14053594, 'label': 'Color down', 'sinput': False}, {'mql': 'ColorTo', 'py': 'ColorTo', 'param': None, 'type': 'color', 'default': 65280, 'label': 'Color Up', 'sinput': False}, {'mql': 'ColorSteps', 'py': 'ColorSteps', 'param': 'ColorSteps', 'type': 'int', 'default': 20, 'label': 'Color steps for drawing', 'sinput': False}, {'mql': 'ShowLine', 'py': 'ShowLine', 'param': 'ShowLine', 'type': 'bool', 'default': True, 'label': 'Show colored line', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': []}
+
+# enum enPrices
+pr_close = 0
+pr_open = 1
+pr_high = 2
+pr_low = 3
+pr_median = 4
+pr_typical = 5
+pr_weighted = 6
+pr_average = 7
+pr_medianb = 8
+pr_tbiased = 9
+pr_haclose = 10
+pr_haopen = 11
+pr_hahigh = 12
+pr_halow = 13
+pr_hamedian = 14
+pr_hatypical = 15
+pr_haweighted = 16
+pr_haaverage = 17
+pr_hamedianb = 18
+pr_hatbiased = 19
+_enum('enPrices', {0: 'pr_close', 1: 'pr_open', 2: 'pr_high', 3: 'pr_low', 4: 'pr_median', 5: 'pr_typical', 6: 'pr_weighted', 7: 'pr_average', 8: 'pr_medianb', 9: 'pr_tbiased', 10: 'pr_haclose', 11: 'pr_haopen', 12: 'pr_hahigh', 13: 'pr_halow', 14: 'pr_hamedian', 15: 'pr_hatypical', 16: 'pr_haweighted', 17: 'pr_haaverage', 18: 'pr_hamedianb', 19: 'pr_hatbiased'})
+
+# ---- inputs and global variables
+RsiPeriod = _input('RsiPeriod', 25)  # Rsi period
+T3Period = _input('T3Period', 15.0)  # T3 Calculation period
+T3Hot = _input('T3Hot', 0.7)  # T3 hot value
+T3Original = _input('T3Original', True)  # T3 original Tillson calculation?
+Price = _input('Price', pr_close)  # Price to use
+AdaptivePeriod = _input('AdaptivePeriod', 25)  # Period for adapting
+ColorFrom = _input('ColorFrom', clrOrchid)  # Color down
+ColorTo = _input('ColorTo', clrLime)  # Color Up
+ColorSteps = _input('ColorSteps', 20)  # Color steps for drawing
+ShowLine = _input('ShowLine', True)  # Show colored line
+rsi = Arr(0, 0.0)
+rsiha = Arr(0, 0.0)
+rsihb = Arr(0, 0.0)
+t3 = Arr(0, 0.0)
+colorBuffeh = Arr(0, 0.0)
+colorBuffer = Arr(0, 0.0)
+cSteps = 0
+workDev = Arr(0, 0.0)
+workSma = Arr(0, 0.0, dims=(4,))
+workT3 = Arr(0, 0.0, dims=(6,))
+workT3Coeffs = Arr(0, 0.0, dims=(6,))
+workHa = Arr(0, 0.0, dims=(4,))
+
+def OnInit():
+    global cSteps
+    SetIndexBuffer(0, rsiha, INDICATOR_DATA)
+    SetIndexBuffer(1, rsihb, INDICATOR_DATA)
+    SetIndexBuffer(2, colorBuffeh, INDICATOR_COLOR_INDEX)
+    SetIndexBuffer(3, rsi, INDICATOR_DATA)
+    SetIndexBuffer(4, colorBuffer, INDICATOR_COLOR_INDEX)
+    SetIndexBuffer(5, t3, INDICATOR_CALCULATIONS)
+    cSteps = (ColorSteps if (ColorSteps > 1) else 2)
+    PlotIndexSetInteger(0, PLOT_COLOR_INDEXES, cSteps + 1)
+    PlotIndexSetInteger(1, PLOT_COLOR_INDEXES, cSteps + 1)
+    i = 0
+    while i < (cSteps + 1):
+        PlotIndexSetInteger(0, PLOT_LINE_COLOR, i, gradientColor(i, cSteps + 1, ColorFrom, ColorTo))
+        i += 1
+    if ShowLine:
+        i = 0
+        while i < (cSteps + 1):
+            PlotIndexSetInteger(1, PLOT_LINE_COLOR, i, gradientColor(i, cSteps + 1, ColorFrom, ColorTo))
+            i += 1
+    else:
+        for i in range(0, cSteps + 1):
+            PlotIndexSetInteger(1, PLOT_LINE_COLOR, i, clrNONE)
+    return 0
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    for i in range(MathMax(prev_calculated - 1, 0), rates_total):
+        price = getPrice(Price, open, close, high, low, i, rates_total)
+        dev = iDeviation(price, iSma(price, AdaptivePeriod, rates_total, i, 0), AdaptivePeriod, rates_total, i)
+        avg = iSma(dev, AdaptivePeriod, rates_total, i, 1)
+        period = T3Period
+        if dev != 0:
+            period = _fdiv(T3Period * avg, dev)
+        if period < 3:
+            period = 3.0
+        t3[i] = iT3(price, period, T3Hot, T3Original, i, rates_total, 0)
+        up = 0.0
+        down = 0.0
+        diff = 0.0
+        k = 0
+        while k < RsiPeriod and (i - k - 1) >= 0:
+            diff = t3[i - k] - t3[i - k - 1]
+            if diff > 0:
+                up += diff
+            else:
+                down -= diff
+            k += 1
+        if (up + down) == 0:
+            rsi[i] = 50.0
+        else:
+            rsi[i] = _fdiv(100 * up, up + down)
+        rsiha[i] = rsi[i]
+        rsihb[i] = 50.0
+        colorBuffer[i] = MathFloor((rsi[i] * cSteps) / 100.0)
+        colorBuffeh[i] = MathFloor((rsi[i] * cSteps) / 100.0)
+    return rates_total
+
+def iDeviation(price, dMA, period, totalBars, i):
+    if ArrayRange(workDev, 0) != totalBars:
+        ArrayResize(workDev, totalBars)
+    workDev[i] = price
+    dSum = 0.0
+    k = 0
+    while (i - k) >= 0 and k < period:
+        dSum += (workDev[i - k] - dMA) * (workDev[i - k] - dMA)
+        k += 1
+    return MathSqrt(_fdiv(dSum, period))
+
+def iSma(price, period, totalBars, r, instanceNo=0):
+    if ArrayRange(workSma, 0) != totalBars:
+        ArrayResize(workSma, totalBars)
+    instanceNo *= 2
+    k = 0
+    workSma[r][instanceNo] = price
+    if r >= period:
+        workSma[r][instanceNo + 1] = workSma[r - 1][instanceNo + 1] + _fdiv(workSma[r][instanceNo] - workSma[r - period][instanceNo], period)
+    else:
+        workSma[r][instanceNo + 1] = 0.0
+        k = 0
+        while k < period and (r - k) >= 0:
+            workSma[r][instanceNo + 1] += workSma[r - k][instanceNo]
+            k += 1
+        workSma[r][instanceNo + 1] = _fdiv(workSma[r][instanceNo + 1], k)
+    return workSma[r][instanceNo + 1]
+
+def iT3(price, period, hot, original, r, bars, instanceNo=0):
+    if ArrayRange(workT3, 0) != bars:
+        ArrayResize(workT3, bars)
+    if ArrayRange(workT3Coeffs, 0) < (instanceNo + 1):
+        ArrayResize(workT3Coeffs, instanceNo + 1)
+    if workT3Coeffs[instanceNo][0] != period:
+        workT3Coeffs[instanceNo][0] = period
+        a = hot
+        workT3Coeffs[instanceNo][1] = (-a) * a * a
+        workT3Coeffs[instanceNo][2] = (3 * a * a) + (3 * a * a * a)
+        workT3Coeffs[instanceNo][3] = (-6 * a * a) - (3 * a) - (3 * a * a * a)
+        workT3Coeffs[instanceNo][4] = 1 + (3 * a) + (a * a * a) + (3 * a * a)
+        if original:
+            workT3Coeffs[instanceNo][5] = _fdiv(2.0, 1.0 + period)
+        else:
+            workT3Coeffs[instanceNo][5] = _fdiv(2.0, 2.0 + ((period - 1.0) / 2.0))
+    buffer = instanceNo * 6
+    if r == 0:
+        workT3[r][0 + buffer] = price
+        workT3[r][1 + buffer] = price
+        workT3[r][2 + buffer] = price
+        workT3[r][3 + buffer] = price
+        workT3[r][4 + buffer] = price
+        workT3[r][5 + buffer] = price
+    else:
+        workT3[r][0 + buffer] = workT3[r - 1][0 + buffer] + (workT3Coeffs[instanceNo][5] * (price - workT3[r - 1][0 + buffer]))
+        workT3[r][1 + buffer] = workT3[r - 1][1 + buffer] + (workT3Coeffs[instanceNo][5] * (workT3[r][0 + buffer] - workT3[r - 1][1 + buffer]))
+        workT3[r][2 + buffer] = workT3[r - 1][2 + buffer] + (workT3Coeffs[instanceNo][5] * (workT3[r][1 + buffer] - workT3[r - 1][2 + buffer]))
+        workT3[r][3 + buffer] = workT3[r - 1][3 + buffer] + (workT3Coeffs[instanceNo][5] * (workT3[r][2 + buffer] - workT3[r - 1][3 + buffer]))
+        workT3[r][4 + buffer] = workT3[r - 1][4 + buffer] + (workT3Coeffs[instanceNo][5] * (workT3[r][3 + buffer] - workT3[r - 1][4 + buffer]))
+        workT3[r][5 + buffer] = workT3[r - 1][5 + buffer] + (workT3Coeffs[instanceNo][5] * (workT3[r][4 + buffer] - workT3[r - 1][5 + buffer]))
+    return (workT3Coeffs[instanceNo][1] * workT3[r][5 + buffer]) + (workT3Coeffs[instanceNo][2] * workT3[r][4 + buffer]) + (workT3Coeffs[instanceNo][3] * workT3[r][3 + buffer]) + (workT3Coeffs[instanceNo][4] * workT3[r][2 + buffer])
+
+def getPrice(price, open, close, high, low, i, bars, instanceNo=0):
+    if price >= pr_haclose:
+        if ArrayRange(workHa, 0) != bars:
+            ArrayResize(workHa, bars)
+        haOpen = 0.0
+        if i > 0:
+            haOpen = (workHa[i - 1][instanceNo + 2] + workHa[i - 1][instanceNo + 3]) / 2.0
+        else:
+            haOpen = (open[i] + close[i]) / 2
+        haClose = (open[i] + high[i] + low[i] + close[i]) / 4.0
+        haHigh = MathMax(high[i], MathMax(haOpen, haClose))
+        haLow = MathMin(low[i], MathMin(haOpen, haClose))
+        if haOpen < haClose:
+            workHa[i][instanceNo + 0] = haLow
+            workHa[i][instanceNo + 1] = haHigh
+        else:
+            workHa[i][instanceNo + 0] = haHigh
+            workHa[i][instanceNo + 1] = haLow
+        workHa[i][instanceNo + 2] = haOpen
+        workHa[i][instanceNo + 3] = haClose
+        _sw1 = price
+        if _sw1 == pr_haclose:
+            return haClose
+        elif _sw1 == pr_haopen:
+            return haOpen
+        elif _sw1 == pr_hahigh:
+            return haHigh
+        elif _sw1 == pr_halow:
+            return haLow
+        elif _sw1 == pr_hamedian:
+            return (haHigh + haLow) / 2.0
+        elif _sw1 == pr_hamedianb:
+            return (haOpen + haClose) / 2.0
+        elif _sw1 == pr_hatypical:
+            return (haHigh + haLow + haClose) / 3.0
+        elif _sw1 == pr_haweighted:
+            return (haHigh + haLow + haClose + haClose) / 4.0
+        elif _sw1 == pr_haaverage:
+            return (haHigh + haLow + haClose + haOpen) / 4.0
+        elif _sw1 == pr_hatbiased:
+            if haClose > haOpen:
+                return (haHigh + haClose) / 2.0
+            else:
+                return (haLow + haClose) / 2.0
+    _sw2 = price
+    if _sw2 == pr_close:
+        return close[i]
+    elif _sw2 == pr_open:
+        return open[i]
+    elif _sw2 == pr_high:
+        return high[i]
+    elif _sw2 == pr_low:
+        return low[i]
+    elif _sw2 == pr_median:
+        return (high[i] + low[i]) / 2.0
+    elif _sw2 == pr_medianb:
+        return (open[i] + close[i]) / 2.0
+    elif _sw2 == pr_typical:
+        return (high[i] + low[i] + close[i]) / 3.0
+    elif _sw2 == pr_weighted:
+        return (high[i] + low[i] + close[i] + close[i]) / 4.0
+    elif _sw2 == pr_average:
+        return (high[i] + low[i] + close[i] + open[i]) / 4.0
+    elif _sw2 == pr_tbiased:
+        if close[i] > open[i]:
+            return (high[i] + close[i]) / 2.0
+        else:
+            return (low[i] + close[i]) / 2.0
+    return 0.0
+
+def getColor(stepNo, totalSteps, from_, to):
+    stes = float(totalSteps) - 1.0
+    step = _fdiv(from_ - to, stes)
+    return _uint(round(from_ - (step * stepNo)))
+
+def gradientColor(step, totalSteps, from_, to):
+    newBlue = getColor(step, totalSteps, (from_ & 0XFF0000) >> 16, (to & 0XFF0000) >> 16) << 16
+    newGreen = getColor(step, totalSteps, (from_ & 0X00FF00) >> 8, (to & 0X00FF00) >> 8) << 8
+    newRed = getColor(step, totalSteps, from_ & 0X0000FF, to & 0X0000FF)
+    return newBlue + newGreen + newRed
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class RapidRsiAdaptiveT3PreFiltered2(_MQL5Indicator):
+    name = 'rapid_rsi_adaptive_t3_pre-filtered_2'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    repaint_window = 300
+    params = {
+        'RsiPeriod': 25,  # Rsi period
+        'T3Period': 15.0,  # T3 Calculation period
+        'T3Hot': 0.7,  # T3 hot value
+        'T3Original': True,  # T3 original Tillson calculation?
+        'Price': _Choice({0: 'Close', 1: 'Open', 2: 'High', 3: 'Low', 4: 'Median', 5: 'Typical', 6: 'Weighted', 7: 'Average (high+low+open+close)/4', 8: 'Average median body (open+close)/2', 9: 'Trend biased price', 10: 'Heiken ashi close', 11: 'Heiken ashi open', 12: 'Heiken ashi high', 13: 'Heiken ashi low', 14: 'Heiken ashi median', 15: 'Heiken ashi typical', 16: 'Heiken ashi weighted', 17: 'Heiken ashi average', 18: 'Heiken ashi median body', 19: 'Heiken ashi trend biased price'}, default=0),  # Price to use
+        'AdaptivePeriod': 25,  # Period for adapting
+        'ColorSteps': 20,  # Color steps for drawing
+        'ShowLine': True,  # Show colored line
+    }
+    y_range = (-1.0, 101.0)
+

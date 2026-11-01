@@ -1,0 +1,128 @@
+"""PChannel_System — converted from MQL5: MQL5 Indicators/PChannel_System_HTF/PChannel_System.mq5
+
+Пробойная система с использованием индикатора PChannel
+Copyright: Copyright © 2014, Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 1.00
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+
+MQL5_META = {'props': {'copyright': 'Copyright © 2014, Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '1.00', 'window': 'chart', 'indicator_buffers': 9, 'indicator_plots': 4}, 'types': {1: 7, 2: 1, 3: 1, 4: 17}, 'colors': {1: [16119285], 2: [11186720], 3: [9639167], 4: [16711935, 8388736, 8421504, 13434880, 16748574]}, 'widths': {2: 2, 3: 2, 4: 2}, 'styles': {2: 0, 3: 0, 4: 0}, 'labels': {1: 'PChannel', 2: 'Upper PChannel', 3: 'Lower PChannel', 4: 'PChannel_BARS'}, 'levels': [], 'description': ['Пробойная система с использованием индикатора PChannel'], 'name': 'PChannel_System', 'source': 'MQL5 Indicators/PChannel_System_HTF/PChannel_System.mq5', 'folder': 'PChannel_System_HTF', 'inputs': [{'mql': 'period', 'py': 'period', 'param': 'period', 'type': 'uint', 'default': 20, 'label': 'Период поиска экстремумов', 'sinput': False}, {'mql': 'Shift', 'py': 'Shift', 'param': 'Shift', 'type': 'uint', 'default': 2, 'label': 'сдвиг канала по горизонтали в барах', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': []}
+
+# ---- inputs and global variables
+period = _input('period', 20)  # Период поиска экстремумов
+Shift = _input('Shift', 2)  # сдвиг канала по горизонтали в барах
+Up1Buffer = Arr(0, 0.0)
+Dn1Buffer = Arr(0, 0.0)
+Up2Buffer = Arr(0, 0.0)
+Dn2Buffer = Arr(0, 0.0)
+ExtOpenBuffer = Arr(0, 0.0)
+ExtHighBuffer = Arr(0, 0.0)
+ExtLowBuffer = Arr(0, 0.0)
+ExtCloseBuffer = Arr(0, 0.0)
+ExtColorBuffer = Arr(0, 0.0)
+min_rates_total = 0
+
+def OnInit():
+    global min_rates_total
+    min_rates_total = _int(period + 1 + Shift)
+    SetIndexBuffer(0, Up1Buffer, INDICATOR_DATA)
+    ArraySetAsSeries(Up1Buffer, True)
+    SetIndexBuffer(1, Dn1Buffer, INDICATOR_DATA)
+    ArraySetAsSeries(Dn1Buffer, True)
+    SetIndexBuffer(2, Up2Buffer, INDICATOR_DATA)
+    ArraySetAsSeries(Up2Buffer, True)
+    SetIndexBuffer(3, Dn2Buffer, INDICATOR_DATA)
+    ArraySetAsSeries(Dn2Buffer, True)
+    SetIndexBuffer(4, ExtOpenBuffer, INDICATOR_DATA)
+    SetIndexBuffer(5, ExtHighBuffer, INDICATOR_DATA)
+    SetIndexBuffer(6, ExtLowBuffer, INDICATOR_DATA)
+    SetIndexBuffer(7, ExtCloseBuffer, INDICATOR_DATA)
+    ArraySetAsSeries(ExtOpenBuffer, True)
+    ArraySetAsSeries(ExtHighBuffer, True)
+    ArraySetAsSeries(ExtLowBuffer, True)
+    ArraySetAsSeries(ExtCloseBuffer, True)
+    SetIndexBuffer(8, ExtColorBuffer, INDICATOR_COLOR_INDEX)
+    ArraySetAsSeries(ExtColorBuffer, True)
+    PlotIndexSetInteger(0, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetInteger(1, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(1, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetInteger(2, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(2, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetInteger(3, PLOT_SHIFT, 0)
+    PlotIndexSetInteger(3, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(3, PLOT_EMPTY_VALUE, 0)
+    shortname = Box("")
+    StringConcatenate(shortname, 'PChannel(', period, ')')
+    IndicatorSetString(INDICATOR_SHORTNAME, shortname.v)
+    IndicatorSetInteger(INDICATOR_DIGITS, Digits())
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    if rates_total < min_rates_total:
+        return 0
+    ArraySetAsSeries(open, True)
+    ArraySetAsSeries(close, True)
+    ArraySetAsSeries(high, True)
+    ArraySetAsSeries(low, True)
+    limit = 0
+    HH = 0.0
+    LL = 0.0
+    if prev_calculated > rates_total or prev_calculated <= 0:
+        limit = rates_total - min_rates_total
+    else:
+        limit = rates_total - prev_calculated
+    for bar in range(limit, 0 - 1, -1):
+        HH = high[ArrayMaximum(high, bar, period)]
+        LL = low[ArrayMinimum(low, bar, period)]
+        Up1Buffer[bar] = HH
+        Dn1Buffer[bar] = LL
+        Up2Buffer[bar] = HH
+        Dn2Buffer[bar] = LL
+    if prev_calculated > rates_total or prev_calculated <= 0:
+        limit -= _int(Shift)
+    for bar in range(limit, 0 - 1, -1):
+        clr = 2
+        ExtOpenBuffer[bar] = 0.0
+        ExtCloseBuffer[bar] = 0.0
+        ExtHighBuffer[bar] = 0.0
+        ExtLowBuffer[bar] = 0.0
+        if close[bar] > Up1Buffer[bar + Shift]:
+            if open[bar] <= close[bar]:
+                clr = 4
+            else:
+                clr = 3
+            ExtOpenBuffer[bar] = open[bar]
+            ExtCloseBuffer[bar] = close[bar]
+            ExtHighBuffer[bar] = high[bar]
+            ExtLowBuffer[bar] = low[bar]
+        if close[bar] < Dn1Buffer[bar + Shift]:
+            if open[bar] > close[bar]:
+                clr = 0
+            else:
+                clr = 1
+            ExtOpenBuffer[bar] = open[bar]
+            ExtCloseBuffer[bar] = close[bar]
+            ExtHighBuffer[bar] = high[bar]
+            ExtLowBuffer[bar] = low[bar]
+        ExtColorBuffer[bar] = clr
+    return rates_total
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class PChannelSystem(_MQL5Indicator):
+    name = 'PChannel_System'
+    pane = _Pane.PRICE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'period': 20,  # Период поиска экстремумов
+        'Shift': 2,  # сдвиг канала по горизонтали в барах
+    }
+

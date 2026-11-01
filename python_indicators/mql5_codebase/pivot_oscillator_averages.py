@@ -1,0 +1,296 @@
+"""Pivot oscillator - averages — converted from MQL5: MQL5 Indicators/Pivot oscillator - averages/Pivot oscillator - averages.mq5
+
+Pivot oscillator
+Copyright: © mladen, 2018; Link: mladenfx@gmail.com; Version: 1.00
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+
+MQL5_META = {'props': {'copyright': '© mladen, 2018', 'link': 'mladenfx@gmail.com', 'version': '1.00', 'window': 'separate', 'indicator_buffers': 9, 'indicator_plots': 8}, 'types': {8: 1}, 'colors': {8: [6908265]}, 'widths': {8: 2}, 'styles': {}, 'labels': {8: 'Price'}, 'levels': [], 'description': ['Pivot oscillator'], 'name': 'Pivot oscillator - averages', 'source': 'MQL5 Indicators/Pivot oscillator - averages/Pivot oscillator - averages.mq5', 'folder': 'Pivot oscillator - averages', 'inputs': [{'mql': 'inpTimeFrame', 'py': 'inpTimeFrame', 'param': 'inpTimeFrame', 'type': 'int', 'default': 16408, 'label': 'Time frame', 'sinput': False}, {'mql': 'inpMaPeriod', 'py': 'inpMaPeriod', 'param': 'inpMaPeriod', 'type': 'int', 'default': 14, 'label': 'Average period', 'sinput': False}, {'mql': 'inpMaMethod', 'py': 'inpMaMethod', 'param': 'inpMaMethod', 'type': 'int', 'default': 1, 'label': 'Average method', 'sinput': False}, {'mql': 'inpMaPrice', 'py': 'inpMaPrice', 'param': 'inpMaPrice', 'type': 'int', 'default': 6, 'label': 'Average price', 'sinput': False}, {'mql': 'inpColorSup', 'py': 'inpColorSup', 'param': None, 'type': 'color', 'default': 3329330, 'label': 'Support lines color', 'sinput': False}, {'mql': 'inpColorRes', 'py': 'inpColorRes', 'param': None, 'type': 'color', 'default': 255, 'label': 'Resistance lines color', 'sinput': False}, {'mql': 'inpColorPiv', 'py': 'inpColorPiv', 'param': None, 'type': 'color', 'default': 8421504, 'label': 'Pivot line color', 'sinput': False}, {'mql': 'inpSaRStyle', 'py': 'inpSaRStyle', 'param': 'inpSaRStyle', 'type': 'int', 'default': 2, 'label': 'Pivot, support and resistance lines style', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': []}
+
+MQL5_PROGRAM_PATH = 0  # MQL5 constant unknown to the converter
+
+# enum enTimeFrames
+tf_cu = 0
+tf_m1 = 1
+tf_m2 = 2
+tf_m3 = 3
+tf_m4 = 4
+tf_m5 = 5
+tf_m6 = 6
+tf_m10 = 10
+tf_m12 = 12
+tf_m15 = 15
+tf_m20 = 20
+tf_m30 = 30
+tf_h1 = 16385
+tf_h2 = 16386
+tf_h3 = 16387
+tf_h4 = 16388
+tf_h6 = 16390
+tf_h8 = 16392
+tf_h12 = 16396
+tf_d1 = 16408
+tf_w1 = 32769
+tf_mn = 49153
+tf_cp1 = -1
+tf_cp2 = -2
+tf_cp3 = -3
+tf_cp4 = -4
+_enum('enTimeFrames', {0: 'tf_cu', 1: 'tf_m1', 2: 'tf_m2', 3: 'tf_m3', 4: 'tf_m4', 5: 'tf_m5', 6: 'tf_m6', 10: 'tf_m10', 12: 'tf_m12', 15: 'tf_m15', 20: 'tf_m20', 30: 'tf_m30', 16385: 'tf_h1', 16386: 'tf_h2', 16387: 'tf_h3', 16388: 'tf_h4', 16390: 'tf_h6', 16392: 'tf_h8', 16396: 'tf_h12', 16408: 'tf_d1', 32769: 'tf_w1', 49153: 'tf_mn', -1: 'tf_cp1', -2: 'tf_cp2', -3: 'tf_cp3', -4: 'tf_cp4'})
+
+# enum enMaTypes
+ma_sma = 0
+ma_ema = 1
+ma_smma = 2
+ma_lwma = 3
+_enum('enMaTypes', {0: 'ma_sma', 1: 'ma_ema', 2: 'ma_smma', 3: 'ma_lwma'})
+
+# ---- inputs and global variables
+inpTimeFrame = _input('inpTimeFrame', tf_d1)  # Time frame
+inpMaPeriod = _input('inpMaPeriod', 14)  # Average period
+inpMaMethod = _input('inpMaMethod', ma_ema)  # Average method
+inpMaPrice = _input('inpMaPrice', PRICE_TYPICAL)  # Average price
+inpColorSup = _input('inpColorSup', clrLimeGreen)  # Support lines color
+inpColorRes = _input('inpColorRes', clrRed)  # Resistance lines color
+inpColorPiv = _input('inpColorPiv', clrGray)  # Pivot line color
+inpSaRStyle = _input('inpSaRStyle', STYLE_DOT)  # Pivot, support and resistance lines style
+PBuffer = Arr(0, 0.0)
+S1Buffer = Arr(0, 0.0)
+R1Buffer = Arr(0, 0.0)
+S2Buffer = Arr(0, 0.0)
+R2Buffer = Arr(0, 0.0)
+S3Buffer = Arr(0, 0.0)
+R3Buffer = Arr(0, 0.0)
+Price = Arr(0, 0.0)
+count = Arr(0, 0.0)
+_mtfHandle = INVALID_HANDLE
+_indicatorTimeFrame = 0
+_indicatorName = ""
+_avgNames = Arr.of(['SMA', 'EMA', 'SMMA', 'LWMA'], fill="")
+workSma = Arr(0, 0.0, dims=(1,))
+workEma = Arr(0, 0.0, dims=(1,))
+workSmma = Arr(0, 0.0, dims=(1,))
+workLwma = Arr(0, 0.0, dims=(1,))
+_tfsPer = Arr.of([PERIOD_M1, PERIOD_M2, PERIOD_M3, PERIOD_M4, PERIOD_M5, PERIOD_M6, PERIOD_M10, PERIOD_M12, PERIOD_M15, PERIOD_M20, PERIOD_M30, PERIOD_H1, PERIOD_H2, PERIOD_H3, PERIOD_H4, PERIOD_H6, PERIOD_H8, PERIOD_H12, PERIOD_D1, PERIOD_W1, PERIOD_MN1], fill=0)
+_tfsStr = Arr.of(['1 minute', '2 minutes', '3 minutes', '4 minutes', '5 minutes', '6 minutes', '10 minutes', '12 minutes', '15 minutes', '20 minutes', '30 minutes', '1 hour', '2 hours', '3 hours', '4 hours', '6 hours', '8 hours', '12 hours', 'daily', 'weekly', 'monthly'], fill="")
+
+def OnInit():
+    global _indicatorName, _indicatorTimeFrame, _mtfHandle
+    SetIndexBuffer(0, PBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(0, PLOT_LINE_COLOR, inpColorPiv)
+    SetIndexBuffer(1, S1Buffer, INDICATOR_DATA)
+    PlotIndexSetInteger(1, PLOT_LINE_COLOR, inpColorSup)
+    SetIndexBuffer(2, R1Buffer, INDICATOR_DATA)
+    PlotIndexSetInteger(2, PLOT_LINE_COLOR, inpColorRes)
+    SetIndexBuffer(3, S2Buffer, INDICATOR_DATA)
+    PlotIndexSetInteger(3, PLOT_LINE_COLOR, inpColorSup)
+    SetIndexBuffer(4, R2Buffer, INDICATOR_DATA)
+    PlotIndexSetInteger(4, PLOT_LINE_COLOR, inpColorRes)
+    SetIndexBuffer(5, S3Buffer, INDICATOR_DATA)
+    PlotIndexSetInteger(5, PLOT_LINE_COLOR, inpColorSup)
+    SetIndexBuffer(6, R3Buffer, INDICATOR_DATA)
+    PlotIndexSetInteger(6, PLOT_LINE_COLOR, inpColorRes)
+    SetIndexBuffer(7, Price, INDICATOR_DATA)
+    SetIndexBuffer(8, count, INDICATOR_CALCULATIONS)
+    for i in range(0, 7):
+        PlotIndexSetInteger(i, PLOT_DRAW_TYPE, DRAW_LINE)
+        PlotIndexSetInteger(i, PLOT_LINE_STYLE, inpSaRStyle)
+    _indicatorTimeFrame = MathMax(timeFrameGet(inpTimeFrame), Period())
+    _indicatorName = getIndicatorName()
+    if _indicatorTimeFrame != Period():
+        _mtfHandle = iCustom(Symbol(), _indicatorTimeFrame, _indicatorName, 0)
+        if _mtfHandle == INVALID_HANDLE:
+            return INIT_FAILED
+    IndicatorSetString(INDICATOR_SHORTNAME, _avgNames[inpMaMethod] + ' pivot oscillator (' + timeFrameToString(_indicatorTimeFrame) + ')')
+    return INIT_SUCCEEDED
+
+def OnDeinit(reason):
+    pass
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    if Bars(Symbol(), Period()) < rates_total:
+        return prev_calculated
+    _prevMark = 0
+    _tfSeconds = PeriodSeconds(_indicatorTimeFrame)
+    i = MathMax(prev_calculated - 1, 0)
+    P = 0.0
+    R1 = 0.0
+    S1 = 0.0
+    R2 = 0.0
+    S2 = 0.0
+    R3 = 0.0
+    S3 = 0.0
+    if _mtfHandle != INVALID_HANDLE:
+        result = Arr(1, 0.0, dyn=False)
+        if BarsCalculated(_mtfHandle) < 0:
+            return prev_calculated
+        if CopyBuffer(_mtfHandle, 8, 0, 1, result) != 1:
+            return prev_calculated
+        i = MathMin(MathMax(prev_calculated - 1, 0), MathMax(rates_total - _int(_fdiv(result[0] * float(PeriodSeconds(_indicatorTimeFrame)), PeriodSeconds(Period()))) - 1, 0))
+    while i < rates_total:
+        _currMark = _int(float(_idiv(time[i], _tfSeconds)))
+        if _currMark != _prevMark:
+            _rates = Arr(0, 0, factory=MqlRates)
+            _ratesCopied = CopyRates(Symbol(), _indicatorTimeFrame, _DT(time[i]), 2, _rates)
+            LastHigh = (_rates[0].high if (_ratesCopied == 2) else 0)
+            LastLow = (_rates[0].low if (_ratesCopied == 2) else 0)
+            LastClose = (_rates[0].close if (_ratesCopied == 2) else 0)
+            if _ratesCopied == 2:
+                P = (LastHigh + LastLow + LastClose) / 3
+                R1 = (2 * P) - LastLow
+                S1 = (2 * P) - LastHigh
+                R2 = P + (LastHigh - LastLow)
+                S2 = P - (LastHigh - LastLow)
+                R3 = (2 * P) + (LastHigh - (2 * LastLow))
+                S3 = (2 * P) - ((2 * LastHigh) - LastLow)
+        lower = S3
+        range_ = R3 - S3
+        if range_ != 0:
+            R3Buffer[i] = 1.0
+            S3Buffer[i] = -1.0
+            R1Buffer[i] = 2.0 * (_fdiv(R1 - lower, range_) - 0.5)
+            S1Buffer[i] = 2.0 * (_fdiv(S1 - lower, range_) - 0.5)
+            R2Buffer[i] = 2.0 * (_fdiv(R2 - lower, range_) - 0.5)
+            S2Buffer[i] = 2.0 * (_fdiv(S2 - lower, range_) - 0.5)
+            PBuffer[i] = 2.0 * (_fdiv(P - lower, range_) - 0.5)
+            Price[i] = 2.0 * (_fdiv(iCustomMa(inpMaMethod, getPrice(inpMaPrice, open, close, high, low, i, rates_total), inpMaPeriod, i, rates_total) - lower, range_) - 0.5)
+        i += 1
+    count[rates_total - 1] = MathMax(rates_total - prev_calculated + 1, 1)
+    return rates_total
+
+def iCustomMa(mode, price, length, r, bars, instanceNo=0):
+    _sw1 = mode
+    if _sw1 == ma_sma:
+        return iSma(price, _int(length), r, bars, instanceNo)
+    elif _sw1 == ma_ema:
+        return iEma(price, length, r, bars, instanceNo)
+    elif _sw1 == ma_smma:
+        return iSmma(price, _int(length), r, bars, instanceNo)
+    elif _sw1 == ma_lwma:
+        return iLwma(price, _int(length), r, bars, instanceNo)
+    else:
+        return price
+
+def iSma(price, period, r, _bars, instanceNo=0):
+    if ArrayRange(workSma, 0) != _bars:
+        ArrayResize(workSma, _bars)
+    k = 0
+    workSma[r][instanceNo + 0] = price
+    avg = price
+    k = 1
+    while k < period and (r - k) >= 0:
+        avg += workSma[r - k][instanceNo + 0]
+        k += 1
+    return _fdiv(avg, k)
+
+def iEma(price, period, r, _bars, instanceNo=0):
+    if ArrayRange(workEma, 0) != _bars:
+        ArrayResize(workEma, _bars)
+    workEma[r][instanceNo] = price
+    if r > 0 and period > 1:
+        workEma[r][instanceNo] = workEma[r - 1][instanceNo] + (_fdiv(2.0, 1.0 + period) * (price - workEma[r - 1][instanceNo]))
+    return workEma[r][instanceNo]
+
+def iSmma(price, period, r, _bars, instanceNo=0):
+    if ArrayRange(workSmma, 0) != _bars:
+        ArrayResize(workSmma, _bars)
+    workSmma[r][instanceNo] = price
+    if r > 1 and period > 1:
+        workSmma[r][instanceNo] = workSmma[r - 1][instanceNo] + _fdiv(price - workSmma[r - 1][instanceNo], period)
+    return workSmma[r][instanceNo]
+
+def iLwma(price, period, r, _bars, instanceNo=0):
+    if ArrayRange(workLwma, 0) != _bars:
+        ArrayResize(workLwma, _bars)
+    workLwma[r][instanceNo] = price
+    if period <= 1:
+        return price
+    sumw = period
+    sum_ = period * price
+    k = 1
+    while k < period and (r - k) >= 0:
+        weight = period - k
+        sumw += weight
+        sum_ += weight * workLwma[r - k][instanceNo]
+        k += 1
+    return _fdiv(sum_, sumw)
+
+def timeFrameToString(period):
+    if period == PERIOD_CURRENT:
+        period = Period()
+    i = 0
+    i = 0
+    for i in range(i, ArraySize(_tfsPer)):
+        if period == _tfsPer[i]:
+            break
+    else:
+        i = _range_end(i, ArraySize(_tfsPer), 1)
+    return _tfsStr[i]
+
+def timeFrameGet(period):
+    _shift = (MathAbs(period) if (period < 0) else 0)
+    if _shift > 0 or period == tf_cu:
+        period = Period()
+    i = 0
+    i = 0
+    for i in range(i, ArraySize(_tfsPer)):
+        if period == _tfsPer[i]:
+            break
+    else:
+        i = _range_end(i, ArraySize(_tfsPer), 1)
+    return _tfsPer[MathMin(i + _shift, ArraySize(_tfsPer) - 1)]
+
+def getIndicatorName():
+    _path = Box(MQL5InfoString(MQL5_PROGRAM_PATH))
+    StringToLower(_path)
+    _partsA = Arr(0, "")
+    _partsS = StringGetCharacter('\\', 0)
+    _partsN = StringSplit(_path.v, _partsS, _partsA)
+    name = _partsA[_partsN - 1]
+    n = _partsN - 2
+    while n >= 0 and _partsA[n] != 'indicators':
+        name = _partsA[n] + '\\' + name
+        n -= 1
+    return name
+
+def getPrice(tprice, open, close, high, low, i, _bars):
+    _sw2 = tprice
+    if _sw2 == PRICE_CLOSE:
+        return close[i]
+    elif _sw2 == PRICE_OPEN:
+        return open[i]
+    elif _sw2 == PRICE_HIGH:
+        return high[i]
+    elif _sw2 == PRICE_LOW:
+        return low[i]
+    elif _sw2 == PRICE_MEDIAN:
+        return (high[i] + low[i]) / 2.0
+    elif _sw2 == PRICE_TYPICAL:
+        return (high[i] + low[i] + close[i]) / 3.0
+    elif _sw2 == PRICE_WEIGHTED:
+        return (high[i] + low[i] + close[i] + close[i]) / 4.0
+    return 0.0
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class PivotOscillatorAverages(_MQL5Indicator):
+    name = 'Pivot oscillator - averages'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'inpTimeFrame': _Choice({0: 'Current time frame', 1: '1 minute', 2: '2 minutes', 3: '3 minutes', 4: '4 minutes', 5: '5 minutes', 6: '6 minutes', 10: '10 minutes', 12: '12 minutes', 15: '15 minutes', 20: '20 minutes', 30: '30 minutes', 16385: '1 hour', 16386: '2 hours', 16387: '3 hours', 16388: '4 hours', 16390: '6 hours', 16392: '8 hours', 16396: '12 hours', 16408: 'daily', 32769: 'weekly', 49153: 'monthly', -1: 'Next higher time frame', -2: 'Second higher time frame', -3: 'Third higher time frame', -4: 'Fourth higher time frame'}, default=16408),  # Time frame
+        'inpMaPeriod': 14,  # Average period
+        'inpMaMethod': _Choice({0: 'Simple moving average', 1: 'Exponential moving average', 2: 'Smoothed MA', 3: 'Linear weighted MA'}, default=1),  # Average method
+        'inpMaPrice': _Choice({1: 'Close', 2: 'Open', 3: 'High', 4: 'Low', 5: 'Median', 6: 'Typical', 7: 'Weighted'}, default=6),  # Average price
+        'inpSaRStyle': _Choice({0: 'Solid', 1: 'Dash', 2: 'Dot', 3: 'Dashdot', 4: 'Dashdotdot'}, default=2),  # Pivot, support and resistance lines style
+    }
+
