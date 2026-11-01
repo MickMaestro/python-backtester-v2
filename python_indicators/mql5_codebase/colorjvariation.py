@@ -1,0 +1,116 @@
+"""colorjvariation — converted from MQL5: MQL5 Indicators/ColorJVariation_HTF/colorjvariation.mq5
+
+Copyright: 2013,   Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 3.24
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+from backtester.mql5.lib.smoothalgorithms import *  # #include SmoothAlgorithms.mqh
+
+MQL5_META = {'props': {'copyright': '2013,   Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '3.24', 'window': 'separate', 'indicator_buffers': 2, 'indicator_plots': 1}, 'types': {1: 8}, 'colors': {1: [8421504, 65280, 255]}, 'widths': {1: 2}, 'styles': {1: 0}, 'labels': {1: 'JVariation'}, 'levels': [0.0], 'description': [], 'name': 'colorjvariation', 'source': 'MQL5 Indicators/ColorJVariation_HTF/colorjvariation.mq5', 'folder': 'ColorJVariation_HTF', 'inputs': [{'mql': 'Period_', 'py': 'Period_', 'param': 'Period_', 'type': 'int', 'default': 12, 'label': 'Период усреднения', 'sinput': False}, {'mql': 'MA_Method_', 'py': 'MA_Method_', 'param': 'MA_Method_', 'type': 'int', 'default': 0, 'label': 'Метод усреднения', 'sinput': False}, {'mql': 'JLength_', 'py': 'JLength_', 'param': 'JLength_', 'type': 'int', 'default': 3, 'label': 'Глубина JMA сглаживания', 'sinput': False}, {'mql': 'JPhase_', 'py': 'JPhase_', 'param': 'JPhase_', 'type': 'int', 'default': 100, 'label': 'Параметр JMA сглаживания', 'sinput': False}, {'mql': 'Shift', 'py': 'Shift', 'param': 'Shift', 'type': 'int', 'default': 0, 'label': 'Сдвиг индикатора по горизонтали в барах', 'sinput': False}], 'short_form': True, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': ['SmoothAlgorithms.mqh']}
+
+# ---- inputs and global variables
+Period_ = _input('Period_', 12)  # Период усреднения
+MA_Method_ = _input('MA_Method_', MODE_SMA)  # Метод усреднения
+JLength_ = _input('JLength_', 3)  # Глубина JMA сглаживания
+JPhase_ = _input('JPhase_', 100)  # Параметр JMA сглаживания
+Shift = _input('Shift', 0)  # Сдвиг индикатора по горизонтали в барах
+LineBuffer = Arr(0, 0.0)
+ColorLineBuffer = Arr(0, 0.0)
+min_rates_total = 0
+
+def OnInit():
+    global min_rates_total
+    min_rates_total = (3 * Period_) + 30 + 1
+    SetIndexBuffer(0, LineBuffer, INDICATOR_DATA)
+    PlotIndexSetInteger(0, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetString(0, PLOT_LABEL, 'JVariation')
+    SetIndexBuffer(1, ColorLineBuffer, INDICATOR_COLOR_INDEX)
+    shortname = Box("")
+    StringConcatenate(shortname, 'JVariation( Period_ = ', Period_, ', MA_Method_ = ', MA_Method_, ')')
+    IndicatorSetString(INDICATOR_SHORTNAME, shortname.v)
+    IndicatorSetInteger(INDICATOR_DIGITS, Digits() + 1)
+
+def OnCalculate(rates_total, prev_calculated, begin, price):
+    global _s_OnCalculate_start1, _s_OnCalculate_start2, _s_OnCalculate_start3, _s_OnCalculate_start4
+    if rates_total < (min_rates_total + begin):
+        return 0
+    first1 = 0
+    first2 = 0
+    bar = 0
+    ma1 = 0.0
+    ma2 = 0.0
+    ma3 = 0.0
+    jma3 = 0.0
+    if prev_calculated > rates_total or prev_calculated <= 0:
+        first1 = begin
+        _s_OnCalculate_start1 = begin
+        if MA_Method_ != MODE_EMA:
+            _s_OnCalculate_start2 = _s_OnCalculate_start1 + Period_
+            _s_OnCalculate_start3 = _s_OnCalculate_start2 + Period_
+            _s_OnCalculate_start4 = _s_OnCalculate_start3 + Period_
+            first2 = _s_OnCalculate_start4 + 30 + 2
+        else:
+            _s_OnCalculate_start2 = _s_OnCalculate_start1 + 30
+            _s_OnCalculate_start3 = _s_OnCalculate_start2 + 30
+            _s_OnCalculate_start4 = _s_OnCalculate_start3 + 30
+            first2 = _s_OnCalculate_start4 + 30 + 2
+        if begin > 0:
+            PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, first2)
+    else:
+        first1 = prev_calculated - 1
+        first2 = first1
+    bar = first1
+    for bar in range(bar, rates_total):
+        ma1 = _s_OnCalculate_MA1.MASeries(_s_OnCalculate_start1, prev_calculated, rates_total, Period_, MA_Method_, price[bar], bar, False)
+        ma2 = _s_OnCalculate_MA2.MASeries(_s_OnCalculate_start2, prev_calculated, rates_total, Period_, MA_Method_, price[bar] - ma1, bar, False)
+        ma3 = _s_OnCalculate_MA3.MASeries(_s_OnCalculate_start3, prev_calculated, rates_total, Period_, MA_Method_, price[bar] - ma2 - ma1, bar, False)
+        jma3 = _s_OnCalculate_JMA.JJMASeries(_s_OnCalculate_start4, prev_calculated, rates_total, 0, JPhase_, JLength_, ma3, bar, False)
+        LineBuffer[bar] = jma3
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    bar = first2
+    for bar in range(bar, rates_total):
+        ColorLineBuffer[bar] = 0.0
+        if LineBuffer[bar] > LineBuffer[bar - 1]:
+            ColorLineBuffer[bar] = 1.0
+        if LineBuffer[bar] < LineBuffer[bar - 1]:
+            ColorLineBuffer[bar] = 2.0
+    else:
+        bar = _range_end(bar, rates_total, 1)
+    return rates_total
+
+# ---- static local variables
+_s_OnCalculate_start1 = 0
+_s_OnCalculate_start2 = 0
+_s_OnCalculate_start3 = 0
+_s_OnCalculate_start4 = 0
+_s_OnCalculate_MA1 = CMoving_Average()
+_s_OnCalculate_MA2 = CMoving_Average()
+_s_OnCalculate_MA3 = CMoving_Average()
+_s_OnCalculate_JMA = CJJMA()
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class Colorjvariation(_MQL5Indicator):
+    name = 'colorjvariation'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'Period_': 12,  # Период усреднения
+        'MA_Method_': _Choice({0: 'Sma', 1: 'Ema', 2: 'Smma', 3: 'Lwma'}, default=0),  # Метод усреднения
+        'JLength_': 3,  # Глубина JMA сглаживания
+        'JPhase_': 100,  # Параметр JMA сглаживания
+        'Shift': 0,  # Сдвиг индикатора по горизонтали в барах
+        'applied_price': _Choice({1: 'Close', 2: 'Open', 3: 'High', 4: 'Low', 5: 'Median Price (HL/2)', 6: 'Typical Price (HLC/3)', 7: 'Weighted Close (HLCC/4)'}, default=1),
+    }
+

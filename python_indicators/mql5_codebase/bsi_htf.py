@@ -1,0 +1,141 @@
+"""bsi_htf — converted from MQL5: MQL5 Indicators/BSI_HTF/bsi_htf.mq5
+
+BSI с фиксированным во входных параметрах таймфреймом
+Copyright: Copyright © 2016, Nikolay Kositsin; Link: farria@mail.redcom.ru; Version: 1.60
+
+Translated automatically by backtester.mql5 (translator 1.0) on 2026-10-31. The code below follows the MQL5 source statement by statement;
+see backtester/mql5/README for the conventions (Arr, Box, _idiv, ...).
+"""
+# flake8: noqa
+from backtester.mql5.runtime import *  # MQL5 standard library
+
+MQL5_META = {'props': {'copyright': 'Copyright © 2016, Nikolay Kositsin', 'link': 'farria@mail.redcom.ru', 'version': '1.60', 'window': 'separate', 'indicator_buffers': 4, 'indicator_plots': 3}, 'types': {1: 3, 2: 3, 3: 8}, 'colors': {1: [8421376], 2: [255], 3: [16711935, 8421504, 16748574]}, 'widths': {1: 2, 2: 2, 3: 5}, 'styles': {1: 0, 2: 0, 3: 0}, 'labels': {1: 'Floor Bounce Strength', 2: 'Ceiling Bounce Strength', 3: 'Bounce Strength Index'}, 'levels': [10.0, 0.0, -10.0], 'description': ['BSI с фиксированным во входных параметрах таймфреймом'], 'name': 'bsi_htf', 'source': 'MQL5 Indicators/BSI_HTF/bsi_htf.mq5', 'folder': 'BSI_HTF', 'inputs': [{'mql': 'TimeFrame', 'py': 'TimeFrame', 'param': 'TimeFrame', 'type': 'int', 'default': 16388, 'label': 'Период графика индикатора', 'sinput': False}, {'mql': 'InpRangePeriod', 'py': 'InpRangePeriod', 'param': 'InpRangePeriod', 'type': 'uint', 'default': 20, 'label': 'Range Period', 'sinput': False}, {'mql': 'InpSlowing', 'py': 'InpSlowing', 'param': 'InpSlowing', 'type': 'uint', 'default': 3, 'label': 'Slowing', 'sinput': False}, {'mql': 'InpAvgPeriod', 'py': 'InpAvgPeriod', 'param': 'InpAvgPeriod', 'type': 'uint', 'default': 3, 'label': 'Avg Period', 'sinput': False}, {'mql': 'InpUsingVolumeWeight', 'py': 'InpUsingVolumeWeight', 'param': 'InpUsingVolumeWeight', 'type': 'int', 'default': 3, 'label': 'Using Volume', 'sinput': False}, {'mql': 'Shift', 'py': 'Shift', 'param': 'Shift', 'type': 'int', 'default': 0, 'label': 'Сдвиг индикатора по горизонтали в барах', 'sinput': False}], 'short_form': False, 'has_oncalculate': True, 'missing_includes': [], 'imports': [], 'libraries': []}
+
+# enum Volume_Mode
+ENUM_WITHOUT_VOLUME = 1
+ENUM_VOLUME = 2
+ENUM_TICKVOLUME = 3
+_enum('Volume_Mode', {1: 'ENUM_WITHOUT_VOLUME', 2: 'ENUM_VOLUME', 3: 'ENUM_TICKVOLUME'})
+
+# ---- inputs and global variables
+TimeFrame = _input('TimeFrame', PERIOD_H4)  # Период графика индикатора
+InpRangePeriod = _input('InpRangePeriod', 20)  # Range Period
+InpSlowing = _input('InpSlowing', 3)  # Slowing
+InpAvgPeriod = _input('InpAvgPeriod', 3)  # Avg Period
+InpUsingVolumeWeight = _input('InpUsingVolumeWeight', ENUM_TICKVOLUME)  # Using Volume
+Shift = _input('Shift', 0)  # Сдвиг индикатора по горизонтали в барах
+Ind1Buffer = Arr(0, 0.0)
+Ind2Buffer = Arr(0, 0.0)
+Ind3Buffer = Arr(0, 0.0)
+Ind4Buffer = Arr(0, 0.0)
+min_rates_total = 0
+Ind_Handle = 0
+
+def GetStringTimeframe(timeframe):
+    return StringSubstr(EnumToString(timeframe, 'ENUM_TIMEFRAMES'), 7, -1)
+
+def OnInit():
+    global Ind_Handle, min_rates_total
+    if not TimeFramesCheck('BSI_HTF', TimeFrame):
+        return INIT_FAILED
+    min_rates_total = 2
+    Ind_Handle = iCustom(Symbol(), TimeFrame, 'BSI', InpRangePeriod, InpSlowing, InpAvgPeriod, InpUsingVolumeWeight)
+    if Ind_Handle == INVALID_HANDLE:
+        Print(' Не удалось получить хендл индикатора BSI')
+        return INIT_FAILED
+    SetIndexBuffer(0, Ind1Buffer, INDICATOR_DATA)
+    ArraySetAsSeries(Ind1Buffer, True)
+    SetIndexBuffer(1, Ind2Buffer, INDICATOR_DATA)
+    ArraySetAsSeries(Ind2Buffer, True)
+    SetIndexBuffer(2, Ind3Buffer, INDICATOR_COLOR_INDEX)
+    ArraySetAsSeries(Ind3Buffer, True)
+    SetIndexBuffer(3, Ind4Buffer, INDICATOR_COLOR_INDEX)
+    ArraySetAsSeries(Ind4Buffer, True)
+    PlotIndexSetInteger(0, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(1, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(1, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    PlotIndexSetInteger(2, PLOT_SHIFT, Shift)
+    PlotIndexSetInteger(2, PLOT_DRAW_BEGIN, min_rates_total)
+    PlotIndexSetDouble(2, PLOT_EMPTY_VALUE, EMPTY_VALUE)
+    shortname = Box("")
+    StringConcatenate(shortname, 'BSI_HTF', '(', GetStringTimeframe(TimeFrame), ')')
+    IndicatorSetString(INDICATOR_SHORTNAME, shortname.v)
+    IndicatorSetInteger(INDICATOR_DIGITS, 0)
+    return INIT_SUCCEEDED
+
+def OnCalculate(rates_total, prev_calculated, time, open, high, low, close, tick_volume, volume, spread):
+    if rates_total < min_rates_total:
+        return 0
+    if BarsCalculated(Ind_Handle) < Bars(Symbol(), TimeFrame):
+        return prev_calculated
+    ArraySetAsSeries(time, True)
+    if not CountIndicator(0, "", TimeFrame, Ind_Handle, 0, Ind1Buffer, 1, Ind2Buffer, 2, Ind3Buffer, 3, Ind4Buffer, time, rates_total, prev_calculated, min_rates_total):
+        return 0
+    return rates_total
+
+def CountIndicator(Numb, Symb, TFrame, IndHandle, BuffNumb1, IndBuf1, BuffNumb2, IndBuf2, BuffNumb3, IndBuf3, BuffNumb4, IndBuf4, iTime_, Rates_Total, Prev_Calculated, Min_Rates_Total):
+    IndTime = Arr(1, 0, dyn=False)
+    limit = 0
+    if Prev_Calculated > Rates_Total or Prev_Calculated <= 0:
+        limit = Rates_Total - Min_Rates_Total - 1
+        _s_CountIndicator_LastCountBar[Numb] = limit
+    else:
+        limit = _s_CountIndicator_LastCountBar[Numb] + Rates_Total - Prev_Calculated
+    for bar in range(limit, 0 - 1, -1):
+        if CopyTime(Symbol(), TFrame, _DT(iTime_[bar]), 1, IndTime) <= 0:
+            return (0 != 0)
+        if iTime_[bar] >= IndTime[0] and iTime_[bar + 1] < IndTime[0]:
+            _s_CountIndicator_LastCountBar[Numb] = bar
+            Arr_ = Arr(1, 0.0, dyn=False)
+            if CopyBuffer(IndHandle, BuffNumb1, _DT(iTime_[bar]), 1, Arr_) <= 0:
+                return (0 != 0)
+            IndBuf1[bar] = Arr_[0]
+            if CopyBuffer(IndHandle, BuffNumb2, _DT(iTime_[bar]), 1, Arr_) <= 0:
+                return (0 != 0)
+            IndBuf2[bar] = Arr_[0]
+            if CopyBuffer(IndHandle, BuffNumb3, _DT(iTime_[bar]), 1, Arr_) <= 0:
+                return (0 != 0)
+            IndBuf3[bar] = Arr_[0]
+            if CopyBuffer(IndHandle, BuffNumb4, _DT(iTime_[bar]), 1, Arr_) <= 0:
+                return (0 != 0)
+            IndBuf4[bar] = Arr_[0]
+        else:
+            IndBuf1[bar] = IndBuf1[bar + 1]
+            IndBuf2[bar] = IndBuf2[bar + 1]
+            IndBuf3[bar] = IndBuf3[bar + 1]
+            IndBuf4[bar] = IndBuf4[bar + 1]
+    return True
+
+def TimeFramesCheck(IndName, TFrame):
+    if TFrame < Period() and TFrame != PERIOD_CURRENT:
+        Print('Период графика для индикатора ' + IndName + ' не может быть меньше периода текущего графика!')
+        Print('Следует изменить входные параметры индикатора!')
+        return (0 != 0)
+    return True
+
+# ---- static local variables
+_s_CountIndicator_LastCountBar = Arr(1, 0, dyn=False)
+
+
+# ---------------------------------------------------------------------- plugin
+from backtester.indicators.base import Choice as _Choice, Pane as _Pane
+from backtester.mql5.indicator import MQL5Indicator as _MQL5Indicator
+
+
+class BsiHtf(_MQL5Indicator):
+    name = 'bsi_htf'
+    pane = _Pane.SEPARATE
+    program_file = __file__
+    meta = MQL5_META
+    params = {
+        'TimeFrame': _Choice({0: 'CURRENT', 1: 'M1', 2: 'M2', 3: 'M3', 4: 'M4', 5: 'M5', 6: 'M6', 10: 'M10', 12: 'M12', 15: 'M15', 20: 'M20', 30: 'M30', 16385: 'H1', 16386: 'H2', 16387: 'H3', 16388: 'H4', 16390: 'H6', 16392: 'H8', 16396: 'H12', 16408: 'D1', 32769: 'W1', 49153: 'MN1'}, default=16388),  # Период графика индикатора
+        'InpRangePeriod': 20,  # Range Period
+        'InpSlowing': 3,  # Slowing
+        'InpAvgPeriod': 3,  # Avg Period
+        'InpUsingVolumeWeight': _Choice({1: 'Using without Volume', 2: 'Using Volume', 3: 'Using TickVolume'}, default=3),  # Using Volume
+        'Shift': 0,  # Сдвиг индикатора по горизонтали в барах
+    }
+
