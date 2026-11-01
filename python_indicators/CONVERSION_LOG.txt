@@ -1,0 +1,384 @@
+MQL5 -> PYTHON CONVERSION LOG
+=============================
+
+Source folders (on this machine):
+  mql5_indicators/MQL5 Codebase/MQL5 Include      156 files (154 .mqh + 2 .mq5)
+  mql5_indicators/MQL5 Codebase/MQL5 Indicators   6,447 .mq5 in 5,121 folders
+
+Python destinations:
+  backtester/indicators/mql5_include/   ports of the include libraries
+  python_indicators/                    converted indicators (one plugin file each)
+  tests/test_mql5_include.py            tests for the include ports (pytest)
+
+Contents
+  A. Conventions used by every port
+  B. Phase 1: MQL5 Include, file by file (all 156)
+  C. Standard MT5 includes the indicators use that are NOT in the Include folder
+  D. Phase 2: indicator conversions (running log)
+
+
+A. CONVENTIONS
+--------------
+* Faithful, line-by-line ports. MQL class, method and function names and
+  argument orders are kept, so an indicator port reads like its .mq5.
+* MQL5 semantics come from mql5_include/mql_runtime.py:
+    - EMPTY_VALUE = DBL_MAX (1.797e308); converted to NaN only when a plugin
+      returns its plot arrays (NaN = "draw nothing" in this app);
+    - idiv/imod = C integer division (truncates toward zero);
+    - fdiv = IEEE float division (x/0 = inf, 0/0 = nan instead of an exception);
+    - 32-bit wrap-around (as_int32) where the source relies on int overflow.
+* Series indexing (ArraySetAsSeries true): kept wherever the source uses
+  it (index 0 = newest bar). Plugins return forward arrays (index 0 = oldest).
+* Source bugs that change the numbers are REPRODUCED, not fixed, and are
+  documented in the module docstring ("Faithfully reproduced ..."). The goal
+  is identical output to MetaTrader.
+* Terminal data functions (CopyRates, iClose(symbol, tf, shift), SymbolInfo*,
+  MarketInfo, ...) read from mql5_include/terminal.py: a stand-in terminal
+  that holds bar DataFrames per (symbol, timeframe) plus a contract spec.
+* Chart-object, canvas and GUI code has no counterpart: this app draws an
+  indicator from the arrays it returns, not from chart objects. Pure-drawing
+  includes are therefore not ported, and object calls inside ported code are
+  no-ops.
+
+Status legend
+  PORTED      full port; the module docstring lists any quirks
+  PARTIAL     the computing part is ported; terminal/account/UI parts are not
+  SAME AS     identical or near-identical copy of another file; one module
+              covers both
+  NOT PORTED  no computing content for a backtester indicator (reason given)
+  INDICATOR   an .mq5 that sits in the Include folder; converted as a plugin
+
+
+B. PHASE 1: MQL5 INCLUDE (156 files)                      completed 2026-10-20
+-------------------------------------------------------------------------------
+Verification: each numeric library was checked against an independent
+reference (the app's vectorised smoothing.py, pandas, numpy FFT/SVD);
+tests/test_mql5_include.py has 51 tests (all pass on Python 3.10 / numpy
+2.2.6 / pandas 2.3.3, the versions in .venv).
+
+--- 3D ---
+3D/GM.mqh                         NOT PORTED  getters/setters on chart objects (ObjectGet*)
+3D/IGO.mqh                        NOT PORTED  isometric 3-D drawing with chart objects
+3D/USC.mqh                        NOT PORTED  3-D scene built on IGO/GM (chart objects)
+
+--- AIV ---
+AIV/Charts.mqh                    NOT PORTED  draws chart objects only
+AIV/Matrices.mqh                  PORTED      -> aiv.py (returns/equity/log/percent matrices, synchronize)
+AIV/Resources.mqh                 PARTIAL     -> aiv.py. CExpression, isTradingTime, getTickCost,
+                                              getChain, pipsToMoney ... ported. getMargin and getDeals
+                                              need the live trading account -> raise NotImplementedError.
+                                              logData appends to a path you pass.
+
+--- root files ---
+AlexSTAL_OutsideBar.mqh           PORTED      -> outside_bar.py (lower-timeframe lookups via terminal.py;
+                                              without that data it returns the simple-logic answer, as MT5)
+ArrayUtils.mqh                    PORTED      -> array_utils.py
+BPNN_MQL.mqh                      PORTED      -> bpnn.py (Train/Test API)
+BPNN_MQL_IMPL.mqh                 PORTED      -> bpnn.py (RPROP back-prop network; XOR test passes).
+                                              Initial weights come from Python's random (seed= optional);
+                                              MT5 seeds rand() from GetTickCount, so it is random there too.
+BPNNMQLi45.mqh                    NOT PORTED  MQL4-style SetIndexStyle/plot shims for the BPNN demo
+                                              indicator; the network itself is in bpnn.py
+Candlestick.mqh                   PORTED      -> candlestick.py (cCandlestick)
+CreateObjects.mqh                 NOT PORTED  chart-object creation helpers
+CustomMultiThreadedExample.mqh    NOT PORTED  multi-chart worker example (chart events)
+DateTime.mqh                      PORTED      -> mql4_compat.py (TimeYear/TimeMonth/... accessors)
+Define.mqh                        PORTED      -> mql4_compat.py (MQL4 constants)
+Enum.mqh                          PORTED      -> mql4_compat.py (TFMigrate)
+EventBase.mqh                     NOT PORTED  chart-event dispatch framework (OnChartEvent plumbing)
+HLCrossSigForWPR.mq5              INDICATOR   -> python_indicators/hl_cross_sig_for_wpr.py (see section D)
+IndArray.mqh                      PORTED      -> containers.py (Indicator / IndicatorArray buffer wrappers)
+MultiThreadedObjectWorker.mqh     NOT PORTED  multi-chart object worker (chart events)
+OneSideGaussian.mqh               PORTED      -> one_side_gaussian.py. Quirk kept: the Gaussian exponent is
+                                              computed in integer arithmetic (flat weights), and N+1 taps
+                                              are summed over an N-tap kernel.
+RenkoCharts.mqh                   PARTIAL     -> renko.py. Brick engine ported line by line plus
+                                              RenkoCharts.to_frame() (bricks as a bar DataFrame).
+                                              Custom-symbol creation / chart opening not ported.
+SmoothAlgorithms.mqh              PORTED      -> smooth_algorithms.py (v3.24). All classes: CMoving_Average,
+                                              CStdDeviation, CJJMA, CT3, CJurX, CParMA, CCMO, CAMA,
+                                              CMomentum, CnMomentum, CROC, CFATL/CSATL/CRFTL/CRSTL, CXMA,
+                                              PriceSeries/iPriceSeries/bPriceSeries; plus *_series()
+                                              whole-array helpers. Matches smoothing.py to ~1e-10.
+                                              Quirks kept: BarCheck4/5 state save/restore (incremental
+                                              recalculation verified), CParMA 32-bit int overflow for
+                                              Length > 100, SMMA Length=1 gives 0/0 (NaN), BarCheck6 is
+                                              declared but not implemented in the source.
+SmoothAlgorithms45.mqh            SAME AS     SmoothAlgorithms.mqh -> smooth_algorithms.py
+Symbol.mqh                        NOT PORTED  clones symbol properties into a custom symbol (terminal feature)
+TradeAlgorithms.mqh               PARTIAL     -> trade_algorithms.py (+ new_bar.CIsNewBar). Enums, time-level
+                                              bookkeeping (incl. the _M variants), StopCorrect/dStopCorrect,
+                                              LotCorrect, GetSymbolByCurrencies, ResultRetcodeDescription
+                                              (Russian; english=True for English). NOT ported: the
+                                              Buy/Sell PositionOpen/Close/Modify order functions -> an EA
+                                              uses the backtester's Strategy API instead.
+TypeToBytes.mqh                   NOT PORTED  reinterpret-cast / byte-serialisation macros (no use in Python)
+cFigureBuilder.mqh                NOT PORTED  draws figures with chart objects
+calcfrac.mqh                      PORTED      -> calc_frac.py
+ctradestatistics.mqh              NOT PORTED  statistics of the live account's trade history; the app's own
+                                              engine/stats computes backtest statistics
+dt_fft.mqh                        PORTED      -> dt_fft.py (ALGLIB FFT for MQL). Real FFT, fast cosine and
+                                              sine transforms, correlation, convolution verified. Quirks
+                                              kept: the complex fastfouriertransform has a transcription
+                                              bug (wrong output; use numpy.fft.fft if you need a true
+                                              complex FFT; no Codebase indicator calls it); the inverse
+                                              sine transform scales by integer 2/tnn.
+fastframa.mqh                     PORTED      -> fast_frama.py. Function-level statics are shared by all
+                                              CFRAMA instances, as in MT5 (class attributes;
+                                              CFRAMA.reset_statics() before a fresh full recalculation).
+functions.mqh                     PORTED      -> mql4_compat.py (MetaQuotes "MQL4 functions in MQL5")
+getfontname.mqh                   PORTED      -> font_name.py
+incgui_v4.mqh                     NOT PORTED  GUI controls library
+indicatorsalgorithms.mqh          PORTED      -> indicators_algorithms.py (CLRMA, CVidyaBands, CBBands;
+                                              band classes return (StdDev, Dn, Mov, Up))
+libcisnewbar.mqh                  PORTED      -> new_bar.py (CisNewBar)
+libcustomchart.mqh                NOT PORTED  #import of a compiled .ex5 custom-chart library (no source)
+moneymanagment.mqh                NOT PORTED  lot sizing from the live account (AccountInfo* x9)
+mymql_v201.mqh                    PORTED      -> mql4_compat.py (iTime/iOpen/... data helpers, PeriodInStr,
+                                              iMAOnArray); its object helpers are no-ops
+onesidegaussianlibrary.mqh        PORTED      -> one_side_gaussian.py (OneSideGaussianLibrary)
+onnewbarcalculate.mqh             PORTED      -> new_bar.py (on_new_bar_calculate)
+ssa.mqh                           PORTED      -> ssa.py (singular spectrum analysis; checked against numpy
+                                              SVD). Quirk kept: svector's column-swap loop tests the outer
+                                              loop's variable (runs only when a pivot is exactly 0).
+swisseph.mqh                      PORTED      -> swisseph.py (wrapper over the pyswisseph package, which
+                                              replaces swedll32/64.dll; constants generated from the
+                                              source). Requires: pip install pyswisseph
+tradealgorithms_.mqh              SAME AS     older copy of TradeAlgorithms.mqh -> trade_algorithms.py
+tradestatisticspanel.mqh          NOT PORTED  on-chart panel for ctradestatistics
+williamblau.mqh                   PORTED      -> william_blau.py (ExponentialMAOnBufferWB, PriceName,
+                                              CalculatePriceBuffer)
+x2ma_osc.mq5                      INDICATOR   -> python_indicators/x2ma_osc.py (see section D)
+
+--- Canvas ---
+Canvas/iCanvas.mqh                NOT PORTED  canvas drawing (bitmap on chart)
+Canvas/iCanvas_CB.mqh             NOT PORTED  canvas drawing
+
+--- ClockAnalog ---
+ClockAnalog/CGBitmapLabel.mqh     NOT PORTED  chart-object wrapper
+ClockAnalog/CGButton.mqh          NOT PORTED  chart-object wrapper
+ClockAnalog/CGLabel.mqh           NOT PORTED  chart-object wrapper
+ClockAnalog/CGTrendLine.mqh       NOT PORTED  chart-object wrapper
+ClockAnalog/CGraphBase.mqh        NOT PORTED  chart-object base class
+ClockAnalog/CStockClock.mqh       NOT PORTED  analog clock drawn with objects
+ClockAnalog/StockClockEnums.mqh   NOT PORTED  colour-scheme enum for the clock only
+
+--- CSOM ---
+CSOM/HashMapTemplate.mqh          PORTED      -> containers.py (HashMapTemplate: linear lookup, tombstones,
+                                              purge(), as the source)
+CSOM/IndArray.mqh                 SAME AS     older IndArray.mqh (no empty()/set()) -> containers.py
+
+--- CustomGUI (all canvas-drawn gauges) ---
+CustomGUI/CanvasBase.mqh                      NOT PORTED  canvas base class
+CustomGUI/CustomGUI.mqh                       NOT PORTED  gauge library entry point
+CustomGUI/Indicators/CircleArc.mqh            NOT PORTED  canvas gauge
+CustomGUI/Indicators/CircleSection.mqh        NOT PORTED  canvas gauge
+CustomGUI/Indicators/CircleSimple.mqh         NOT PORTED  canvas gauge
+CustomGUI/Indicators/Hexagon.mqh              NOT PORTED  canvas gauge
+CustomGUI/Indicators/Hexagon2.mqh             NOT PORTED  canvas gauge
+CustomGUI/Indicators/Histogram.mqh            NOT PORTED  canvas gauge
+CustomGUI/Indicators/LineGraph.mqh            NOT PORTED  canvas gauge
+CustomGUI/Indicators/LineRounded.mqh          NOT PORTED  canvas gauge
+CustomGUI/Indicators/LineRoundedVerticalDn.mqh NOT PORTED canvas gauge
+CustomGUI/Indicators/LineRoundedVerticalUp.mqh NOT PORTED canvas gauge
+CustomGUI/Indicators/Petal.mqh                NOT PORTED  canvas gauge
+CustomGUI/Indicators/Pyramid.mqh              NOT PORTED  canvas gauge
+  (the 27 indicators that include CustomGUI compute ordinary values -- RSI,
+   ATR, ... -- and show them on a gauge; their values can still be converted
+   as ordinary plots in phase 2)
+
+--- FxWeirdos ---
+FxWeirdos/createObjects.mqh       NOT PORTED  chart-object helpers
+FxWeirdos/functionsMQL4.mqh       SAME AS     functions.mqh -> mql4_compat.py
+FxWeirdos/pipValue.mqh            PORTED      -> pip_value.py (account balance is a `balance` argument
+                                              instead of AccountInfoDouble)
+
+--- IncOnRingBuffer (Lizar) ---          -> inc_on_ring_buffer.py (all of them)
+IncOnRingBuffer/carrayring.mqh            PORTED  CArrayRing
+IncOnRingBuffer/carrayring256.mqh         PORTED  CArrayRing256
+IncOnRingBuffer/cmaonringbuffer.mqh       PORTED  CMAOnRingBuffer (SMA/EMA/SMMA/LWMA)
+IncOnRingBuffer/cdemaonringbuffer.mqh     PORTED  CDEMAOnRingBuffer (quirk: Last() not Add() in warm-up)
+IncOnRingBuffer/ctemaonringbuffer.mqh     PORTED  CTEMAOnRingBuffer
+IncOnRingBuffer/camaonringbuffer.mqh      PORTED  CAMAOnRingBuffer
+IncOnRingBuffer/ceronringbuffer.mqh       PORTED  CEROnRingBuffer
+IncOnRingBuffer/cmomentumonringbuffer.mqh PORTED  CMomentumOnRingBuffer
+IncOnRingBuffer/crsionringbuffer.mqh      PORTED  CRSIOnRingBuffer
+IncOnRingBuffer/cmfionringbuffer.mqh      PORTED  CMFIOnRingBuffer
+IncOnRingBuffer/cmacdonringbuffer.mqh     PORTED  CMACDOnRingBuffer (quirk: MainOnValue uses m_begin)
+IncOnRingBuffer/cosmaonringbuffer.mqh     PORTED  COsMAOnRingBuffer
+IncOnRingBuffer/catronringbuffer.mqh      PORTED  CATROnRingBuffer (quirk: per-value prev_close = close)
+IncOnRingBuffer/cadxonringbuffer.mqh      PORTED  CADXOnRingBuffer
+IncOnRingBuffer/cstochasticonringbuffer.mqh PORTED CStochasticOnRingBuffer
+IncOnRingBuffer/cfractalsonringbuffer.mqh PORTED  CFractalsOnRingBuffer
+  MISSING from the folder: cadxwonringbuffer.mqh (ADX Wilder), included by 2
+  indicators. Those will use the terminal Wilder ADX in backtester/indicators/mql5.py.
+
+--- MQL5Book ---
+MQL5Book/AutoPtr.mqh              PORTED      -> mql5book.py (AutoPtr)
+MQL5Book/CalendarCache.mqh        NOT PORTED  MT5 economic-calendar API (no offline data source)
+MQL5Book/CalendarDefines.mqh      NOT PORTED  economic-calendar API
+MQL5Book/CalendarFilter.mqh       NOT PORTED  economic-calendar API
+MQL5Book/CalendarFilterCached.mqh NOT PORTED  economic-calendar API
+MQL5Book/DateTime.mqh             SAME AS     DateTime.mqh -> mql4_compat.py
+MQL5Book/Defines.mqh              PORTED      -> mql5book.py (PUSH, EXPAND, STR_TIME_MSC)
+MQL5Book/IS.mqh                   PORTED      -> mql5book.py (IS macro)
+MQL5Book/MapArray.mqh             PORTED      -> mql5book.py (MapArray)
+MQL5Book/MqlError.mqh             PORTED      -> mql_error.py (error table generated from the source; E2S)
+MQL5Book/ObjectMonitorExt.mqh     NOT PORTED  chart-object property monitor
+MQL5Book/PRTF.mqh                 PORTED      -> mql5book.py (ResultPrint/ErrorPrint)
+MQL5Book/QuickSortStructTRef.mqh  PORTED      -> mql5book.py (QuickSortStructTRef, SORT_STRUCT*)
+MQL5Book/StringUtils.mqh          PORTED      -> mql5book.py (StringCombine, SubArrayCombine, StringReverse)
+MQL5Book/Tableau.mqh              NOT PORTED  on-chart text table (chart objects)
+MQL5Book/TimeServerDST.mqh        PORTED      -> mql5book.py (TimeServerZone, DST detection from bar gaps)
+
+--- MT4Bridge ---
+MT4Bridge/MT4MarketInfo.mqh       PORTED      -> mql4_compat.py (MarketInfo; reads tick_value, volume_min,
+                                              volume_step, volume_max, calc_mode, stops_level from the
+                                              terminal.Rates spec)
+MT4Bridge/MT4Mode.mqh             PORTED      -> mql4_compat.py
+MT4Bridge/MT4Time.mqh             PORTED      -> mql4_compat.py
+MT4Bridge/ind4to5.mqh             NOT PORTED  MQL4 object/SetIndexStyle emulation; the data accessors it
+                                              defines (iTime/iOpen/... "DefineBroker") are covered by
+                                              mql4_compat.py
+
+--- MetaCOT ---
+MetaCOT/Enums.mqh                 PORTED      -> metacot_enums.py (generated from the source)
+MetaCOT/ToolBox.mqh               PORTED      -> metacot.py. CFTC data comes from a pluggable source
+                                              (metacot.set_data_source); without one the functions return
+                                              False and the indicators draw nothing, as in MT5 without the
+                                              library. Quirks kept: DCOT/TFF Willco pass netto values,
+                                              LCOT_WILLCO returns the LCOT index, two missing enum labels.
+MetaCOT/Version.mqh               PORTED      -> metacot.py (Version(); demo build flag)
+MetaCOT/VersionFull.mqh           SAME AS     Version.mqh without the demo flag -> metacot.py
+
+--- MyArrays / MyObjects / MyMath (A. Emelyanov) ---
+MyArrays/MyCListPattern.mqh       NOT PORTED  list of drawn pattern objects
+MyArrays/myclistarrow.mqh         NOT PORTED  list of arrow objects
+MyArrays/myclisthline.mqh         NOT PORTED  list of hline objects
+MyArrays/myclisttrendline.mqh     NOT PORTED  list of trendline objects
+MyObjects/mycarrow.mqh            NOT PORTED  chart-object wrapper
+MyObjects/myccomment.mqh          NOT PORTED  chart comment wrapper
+MyObjects/mychline.mqh            NOT PORTED  chart-object wrapper
+MyObjects/myctrendline.mqh        NOT PORTED  chart-object wrapper
+MyMath/Extremum/mycextremum.mqh   PORTED      -> my_math.py (MyCExtremum)
+MyMath/Pattern/MyCPattern.mqh     PORTED      -> my_math.py (MyCPattern, pattern_name)
+MyMath/Pattern/MyCPatternZigzag.mqh PORTED    -> my_math.py (MyCPatternZigzag)
+
+--- SSA ---
+SSA/CCaterpillar.mqh              PORTED      -> caterpillar.py (SVD via numpy.linalg.svd)
+
+--- fxsaber ---
+fxsaber/ChartObjects/ChartObject.mqh            NOT PORTED  chart-object framework
+fxsaber/ChartObjects/ChartObjectHLine.mqh       NOT PORTED  chart object
+fxsaber/ChartObjects/ChartObjectRectangle.mqh   NOT PORTED  chart object
+fxsaber/ChartObjects/ChartObjectResource.mqh    NOT PORTED  chart object
+fxsaber/ChartObjects/ChartObjectText.mqh        NOT PORTED  chart object
+fxsaber/ChartObjects/ChartObjectTicks.mqh       NOT PORTED  tick picture object
+fxsaber/ChartObjects/ChartObjectVLine.mqh       NOT PORTED  chart object
+fxsaber/ChartObjects/ChartObject_Chart.mqh      NOT PORTED  embedded chart object
+fxsaber/ChartObjects/ChartObject_ZoomPrice.mqh  NOT PORTED  chart zoom handling
+fxsaber/ChartObjects/ChartObject_ZoomTicks.mqh  NOT PORTED  chart zoom handling
+fxsaber/ChartObjects/Resource.mqh               NOT PORTED  bitmap resources
+fxsaber/ChartObjects/Ticks/Bar.mqh              NOT PORTED  tick-chart drawing
+fxsaber/ChartObjects/Ticks/Bars.mqh             NOT PORTED  tick-chart drawing
+fxsaber/ChartObjects/Ticks/Tick.mqh             NOT PORTED  tick-chart drawing
+fxsaber/ChartObjects/Ticks/Ticks.mqh            NOT PORTED  tick-chart drawing
+fxsaber/ChartObjects/Ticks/TicksPicture.mqh     NOT PORTED  tick-chart drawing
+fxsaber/ChartObjects/Ticks/TicksPicture2.mqh    NOT PORTED  tick-chart drawing
+fxsaber/Convert.mqh               NOT PORTED  struct <-> byte-array casts
+fxsaber/Expert.mqh                NOT PORTED  runs EAs via chart templates (ChartApplyTemplate)
+fxsaber/Pointer.mqh               NOT PORTED  pointer helpers
+fxsaber/Resource.mqh              NOT PORTED  resource (bitmap/data) storage
+fxsaber/ResourceData.mqh          NOT PORTED  resource (bitmap/data) storage
+fxsaber/PriceChanges/Chart.mqh    NOT PORTED  hides/restores chart decorations
+fxsaber/PriceChanges/Error.mqh    NOT PORTED  error-printing macros only
+fxsaber/PriceChanges/PriceChange.mqh  PORTED  -> price_changes.py (PRICECHANGE)
+fxsaber/PriceChanges/PriceChanges.mqh PORTED  -> price_changes.py (PRICECHANGES)
+fxsaber/PriceChanges/TwoVLines.mqh NOT PORTED reads two dragged vertical lines; pass the two times to
+                                              PRICECHANGES.Calc instead
+
+Support modules written for the ports (no single .mqh source)
+  mql_runtime.py   MQL5 language semantics (see A)
+  terminal.py      Rates(df, symbol, period, **spec), Terminal, set_current/current/rates_for,
+                   Copy*/iOpen.../Bars/iBarShift/iHighest/iLowest, SymbolInfoDouble/Integer,
+                   PERIOD_* constants, PeriodSeconds, TimeToStruct/StructToTime
+
+Totals: 156 files
+  PORTED / PARTIAL / SAME AS   73 files  -> 29 Python modules (+ mql_runtime.py, terminal.py,
+                                          and moving_averages.py from section C = 32)
+  INDICATOR                     2 files  -> 2 plugins
+  NOT PORTED                   81 files  (mostly chart objects / canvas / GUI; also the
+                                          economic-calendar API, live-account code, and
+                                          binary/resource/EA machinery; reasons per file above)
+
+
+C. STANDARD MT5 INCLUDES NOT IN THE INCLUDE FOLDER
+--------------------------------------------------
+These ship with the terminal (MQL5/Include), so the Codebase archives do
+not contain them. Counts are the number of indicators that #include them.
+
+MovingAverages.mqh        233  PORTED -> mql5_include/moving_averages.py, from the copy in
+                               this machine's terminal (Terminal/D0E8209F.../MQL5/Include,
+                               10,737 bytes). SimpleMA, ExponentialMA, SmoothedMA,
+                               LinearWeightedMA and the four *OnBuffer functions (both
+                               LinearWeightedMAOnBuffer overloads). Checked against pandas;
+                               warm-up bars are 0.0 as in MT5.
+Arrays/*.mqh              ~24  (CArrayObj, CArrayInt, CArrayString, CArrayDouble, CList)
+                               -> Python lists, converted per indicator
+ChartObjects/*, Canvas/*,
+Controls/*, Charts/*,
+Graphics/*                ~30  drawing / dialog UI -> plot arrays, or dropped if purely UI
+Trade/*.mqh               ~11  account / position info -> not available to indicators
+Math/Alglib, Math/Stat     ~7  -> numpy / scipy equivalents per indicator
+Indicators/*.mqh           ~3  standard indicator classes -> backtester/indicators/mql5.py
+Generic/HashMap.mqh         1  -> dict
+WinAPI/*                    2  -> not applicable
+ErrorDescription.mqh        5  (not a standard file; not supplied) -> error text not needed
+mymql_v2.1.mqh, mt-utilities.mqh, Control Panel MCM.mqh, Positions Info
+Panel Dialog.mqh, evgetrofi/moneymanagment.mqh, fxsaber/Keyboard/KeyCode.mqh
+                          1-2 each, not supplied with their archives; handled per indicator
+
+
+D. PHASE 2: INDICATOR CONVERSIONS
+---------------------------------
+Format per entry:
+  <source .mq5 (path under MQL5 Codebase)>  -> python_indicators/<file>.py  [STATUS]
+      notes: plots, includes used, quirks reproduced, test result
+Status: CONVERTED | CONVERTED (approx: reason) | SKIPPED (reason) | FAILED (reason)
+
+2026-10-20
+MQL5 Include/x2ma_osc.mq5  -> python_indicators/x2ma_osc.py  [CONVERTED]
+    class X2MAOsc "X2MA_Osc", separate pane, 1 line + level 0.
+    Uses smooth_algorithms CXMA twice in series mode (set=True), a ring of
+    n_period values, interpolation to -50..+50. Warm-up kept: the range window
+    starts with zeros/EMPTY_VALUE, so the first n_period drawn bars sit near
+    -50 (as in MT5). PriceShift input is never used by the source; omitted.
+    Verified identical to an independent forward-indexed reference; causal
+    (tests/test_mql5_include.py).
+
+MQL5 Include/HLCrossSigForWPR.mq5  -> python_indicators/hl_cross_sig_for_wpr.py  [CONVERTED]
+    class HLCrossSigForWPR "HL Cross Signal for WPR", price pane, 8 arrow plots
+    (buy/sell signals, stops, takes, entry levels).
+    Kept: empty slots are 0 (NULL) and the logic reads them that way (e.g.
+    close >= SellStop[prev] is true while the sell stop is unset); zeros are
+    turned into gaps only for drawing. Stops/takes ratchet only while the
+    opposite side is unset. Spread term uses each bar's stored spread x point.
+    iMA (SMA of median price), iWPR and iATR from backtester/indicators/mql5.py.
+    Causal (tests/test_mql5_include.py).
+
+Conversions that existed before this log (in python_indicators/, made
+earlier against the same plugin API; not re-done):
+    adaptive_atr_channel, asctrend, bid_ratio, brain_trend, bykov_trend,
+    candles_smoothed, chande_momentum, chandelier_exit, color_jfatl,
+    color_laguerre, color_rsi_macd, delta_zigzag, fibo_candles,
+    gann_high_low_activator, gann_hilo, go, heiken_ashi_smoothed, ibk_candles,
+    ideal_zz, karacatica, leman_signal, library_demos, macd_histogram, mmath,
+    nelodi, nonlag_dot, onarray_standard, ozymandias, pricechannel_stop,
+    rsi_ma_arrows, rsi_zigzag, rsi_zones, sar_sides, sidus,
+    silvertrend_signal, slope_direction_line, smoothed_ema, ssl, stalin,
+    stochastic_with_flat, supertrend, t3, three_line_break,
+    volty_channel_stop, wprsi_signal, xu_adr_levels, xu_daily_range,
+    xu_effect, xu_ha_candles, xu_rsi_ma, xu_semaphore, xu_sessions, xu_vwap,
+    xu_zz1, zigzag_color, zigzag
+
+(Next: the 6,447 Codebase indicators, in batches, each logged here.)
